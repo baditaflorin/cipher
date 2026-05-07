@@ -10,6 +10,7 @@ export default tseslint.config(
       "dist/**",
       "node_modules/**",
       "coverage/**",
+      "tmp/**",
       "public/**",
       "scripts/**",
       "*.config.*"

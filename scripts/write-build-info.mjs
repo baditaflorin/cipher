@@ -14,23 +14,23 @@ function gitValue(command, fallback) {
   }
 }
 
-const commit = gitValue("git rev-parse --short=12 HEAD", "development");
+const sourceCommitCommand =
+  'git log -1 --format=%H -- . ":(exclude)docs/**" ":(exclude)src/generated/buildInfo.ts"';
+const sourceCommitDateCommand =
+  'git log -1 --format=%cI -- . ":(exclude)docs/**" ":(exclude)src/generated/buildInfo.ts"';
+const commit = gitValue(sourceCommitCommand, "development").slice(0, 12);
 const branch = gitValue("git branch --show-current", "local");
-const builtAt = gitValue("git show -s --format=%cI HEAD", new Date().toISOString());
+const builtAt = gitValue(sourceCommitDateCommand, new Date().toISOString());
 
-const output = `export const buildInfo = ${JSON.stringify(
-  {
-    version: packageJson.version,
-    commit,
-    branch,
-    builtAt,
-    repositoryUrl: "https://github.com/baditaflorin/cipher",
-    paypalUrl: "https://www.paypal.com/paypalme/florinbadita",
-    pagesUrl: "https://baditaflorin.github.io/cipher/"
-  },
-  null,
-  2
-)} as const;\n`;
+const output = `export const buildInfo = {
+  version: ${JSON.stringify(packageJson.version)},
+  commit: ${JSON.stringify(commit)},
+  branch: ${JSON.stringify(branch)},
+  builtAt: ${JSON.stringify(builtAt)},
+  repositoryUrl: "https://github.com/baditaflorin/cipher",
+  paypalUrl: "https://www.paypal.com/paypalme/florinbadita",
+  pagesUrl: "https://baditaflorin.github.io/cipher/"
+} as const;\n`;
 
 const target = resolve(root, "src/generated/buildInfo.ts");
 mkdirSync(dirname(target), { recursive: true });
