@@ -3,56 +3,20 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Cipher</title>
     <meta
       name="description"
-      content="Static, browser-only encrypted group chat with no server-held group state."
+      content="Cipher is a static, browser-only encrypted group chat with no server-held state."
     />
-    <style>
-      :root {
-        color-scheme: dark;
-        font-family:
-          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
-          "Segoe UI", sans-serif;
-        background: #101512;
-        color: #f3f7f1;
-      }
-
-      body {
-        min-height: 100vh;
-        margin: 0;
-        display: grid;
-        place-items: center;
-      }
-
-      main {
-        width: min(720px, calc(100% - 48px));
-      }
-
-      a {
-        color: #7dd7c7;
-      }
-    </style>
+    <meta name="theme-color" content="#14211b" />
+    <link rel="manifest" href="/cipher/manifest.webmanifest" />
+    <link rel="icon" href="/cipher/icon.svg" type="image/svg+xml" />
+    <title>Cipher</title>
+    <script type="module" crossorigin src="/cipher/assets/index-BiqPu8jU.js"></script>
+    <link rel="modulepreload" crossorigin href="/cipher/assets/rolldown-runtime-DWdDZTNf.js">
+    <link rel="modulepreload" crossorigin href="/cipher/assets/react-Bryw7X7H.js">
+    <link rel="stylesheet" crossorigin href="/cipher/assets/index-DFGoCPKy.css">
   </head>
   <body>
-    <main>
-      <h1>Cipher</h1>
-      <p>
-        Browser-only encrypted group chat. The full app is being built into this
-        GitHub Pages URL.
-      </p>
-      <p>
-        Repo:
-        <a href="https://github.com/baditaflorin/cipher">
-          https://github.com/baditaflorin/cipher
-        </a>
-      </p>
-      <p>
-        Support:
-        <a href="https://www.paypal.com/paypalme/florinbadita">
-          https://www.paypal.com/paypalme/florinbadita
-        </a>
-      </p>
-    </main>
+    <div id="root"></div>
   </body>
 </html>

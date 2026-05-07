@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Cipher">
+  <rect width="128" height="128" rx="24" fill="#14211b"/>
+  <path d="M34 58c0-17 12-30 30-30s30 13 30 30v7h-12v-7c0-11-7-19-18-19s-18 8-18 19v7H34v-7Z" fill="#7dd7c7"/>
+  <rect x="25" y="60" width="78" height="48" rx="12" fill="#f2c36b"/>
+  <circle cx="64" cy="82" r="7" fill="#14211b"/>
+  <path d="M64 88v10" stroke="#14211b" stroke-width="6" stroke-linecap="round"/>
+</svg>

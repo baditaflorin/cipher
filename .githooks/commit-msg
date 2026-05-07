@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+message_file="${1:?commit message file required}"
+first_line="$(head -n1 "$message_file")"
+
+if [[ ! "$first_line" =~ ^(feat|fix|docs|chore|refactor|test|ops|data)(\([a-zA-Z0-9._-]+\))?:\ .+ ]]; then
+  echo "Commit message must use Conventional Commits, e.g. feat: add invite flow"
+  exit 1
+fi
