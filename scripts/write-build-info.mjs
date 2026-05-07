@@ -16,7 +16,7 @@ function gitValue(command, fallback) {
 
 const commit = gitValue("git rev-parse --short=12 HEAD", "development");
 const branch = gitValue("git branch --show-current", "local");
-const builtAt = new Date().toISOString();
+const builtAt = gitValue("git show -s --format=%cI HEAD", new Date().toISOString());
 
 const output = `export const buildInfo = ${JSON.stringify(
   {
