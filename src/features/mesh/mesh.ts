@@ -8,6 +8,7 @@ import type {
 import { base64UrlToJson, jsonToBase64Url, randomId } from "../crypto/base64";
 import { decryptJsonWithKey, encryptJsonWithKey } from "../crypto/sodium";
 import { toParticipant } from "../identity/identity";
+import { fetchIceServers, STUN_SERVERS } from "./turnConfig";
 
 type TransportPayload =
   | {
@@ -33,9 +34,11 @@ type EncryptedTransport = {
   ciphertext: string;
 };
 
-const rtcConfig: RTCConfiguration = {
-  iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
-};
+// Mutable container — initialized with STUN-only and replaced once the
+// turn-token-server returns fresh HMAC credentials. Future RTCPeerConnections
+// pick up the relay path; existing ones keep their current config.
+const rtcConfig: RTCConfiguration = { iceServers: STUN_SERVERS };
+void fetchIceServers().then((servers) => { rtcConfig.iceServers = servers; });
 
 export class MeshController {
   private readonly peers = new Map<string, RTCPeerConnection>();
