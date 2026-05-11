@@ -30,6 +30,9 @@ import {
   joinRequestPayloadSchema,
   welcomePayloadSchema
 } from "./schemas";
+import { checkInviteValidity } from "./validity";
+
+export { checkInviteValidity, type InviteValidity } from "./validity";
 
 export function getAppUrl(): string {
   return `${window.location.origin}/cipher/`;
@@ -127,6 +130,20 @@ export async function openJoinRequestCapsule(capsule: string): Promise<{
   const maybeDecodedInvite = await findInviteForCapsule(capsule);
   if (!maybeDecodedInvite) {
     throw new Error("No matching one-time pre-key found in this browser.");
+  }
+
+  const validity = checkInviteValidity(maybeDecodedInvite.invite);
+  if (!validity.ok) {
+    if (validity.reason === "used") {
+      throw new Error(
+        `This invite was already accepted on ${new Date(validity.usedAt).toLocaleString()}. ` +
+          "Create a fresh invite for the new joiner — pre-keys are single-use."
+      );
+    }
+    throw new Error(
+      `This invite expired on ${new Date(validity.expiresAt).toLocaleString()}. ` +
+        "Create a fresh invite; the old one's one-time pre-key is no longer accepted."
+    );
   }
 
   return maybeDecodedInvite;
