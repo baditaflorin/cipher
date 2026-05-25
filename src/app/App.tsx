@@ -220,12 +220,18 @@ export function App() {
     let cancelled = false;
 
     void (async () => {
-      const [chat, meshModule, storage] = await Promise.all([
+      const [chat, meshModule, storage, identityModule] = await Promise.all([
         import("../features/chat/groups"),
         import("../features/mesh/mesh"),
-        import("../features/storage/db")
+        import("../features/storage/db"),
+        import("../features/identity/identity")
       ]);
       const nextDoc = chat.createDocFromGroup(selectedGroup);
+
+      // Announce ourselves into the shared participants map so every peer
+      // (including any peer who joined via room-link) sees us in the roster.
+      chat.writeParticipantToDoc(nextDoc, identityModule.toParticipant(identity));
+
       // MeshController now uses y-webrtc: peers in the same group auto-discover
       // each other via wss://turn.0docker.com/ws and sync the Yjs doc directly.
       const mesh = new meshModule.MeshController(selectedGroup, nextDoc, setMeshStatus);
@@ -240,13 +246,26 @@ export function App() {
       setDoc(nextDoc);
 
       const refresh = () => {
+        // Merge participants written by all peers into the local group record.
+        const docParticipants = chat.readParticipantsFromDoc(nextDoc);
+        const participantMap = new Map(
+          selectedGroup.participants.map((p) => [p.id, p])
+        );
+        docParticipants.forEach((p) => participantMap.set(p.id, p));
+        const mergedParticipants = [...participantMap.values()];
+
+        const mergedGroup = {
+          ...selectedGroup,
+          participants: mergedParticipants,
+          yState: chat.encodeDocState(nextDoc)
+        };
+
         void chat
-          .decryptMessages(selectedGroup, chat.getEncryptedMessages(nextDoc))
+          .decryptMessages(mergedGroup, chat.getEncryptedMessages(nextDoc))
           .then(setMessages);
-        const nextGroup = { ...selectedGroup, yState: chat.encodeDocState(nextDoc) };
-        void storage.saveGroup(nextGroup);
+        void storage.saveGroup(mergedGroup);
         setGroups((items) =>
-          items.map((item) => (item.id === nextGroup.id ? nextGroup : item))
+          items.map((item) => (item.id === mergedGroup.id ? mergedGroup : item))
         );
       };
 

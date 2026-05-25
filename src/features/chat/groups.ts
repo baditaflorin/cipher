@@ -20,6 +20,7 @@ import { toParticipant } from "../identity/identity";
 import { saveGroup } from "../storage/db";
 
 const messagesKey = "messages";
+const participantsKey = "participants";
 
 export async function createGroupRecord(
   identity: IdentityRecord,
@@ -148,6 +149,32 @@ export function upsertParticipant(
     participants,
     updatedAt: new Date().toISOString()
   };
+}
+
+/**
+ * Write a participant into the shared Y.Doc participants map.
+ * The map uses participantId as key → JSON-serialised Participant as value.
+ * y-webrtc syncs it automatically so every peer sees everyone who has ever
+ * connected to this room, even if they are currently offline.
+ */
+export function writeParticipantToDoc(doc: Y.Doc, participant: Participant): void {
+  doc.getMap<string>(participantsKey).set(participant.id, JSON.stringify(participant));
+}
+
+/**
+ * Read all participants stored in the Y.Doc (by all peers, past or present).
+ */
+export function readParticipantsFromDoc(doc: Y.Doc): Participant[] {
+  const map = doc.getMap<string>(participantsKey);
+  const result: Participant[] = [];
+  map.forEach((json) => {
+    try {
+      result.push(JSON.parse(json) as Participant);
+    } catch {
+      /* ignore malformed entries */
+    }
+  });
+  return result;
 }
 
 export function encodeYUpdate(update: Uint8Array): string {
