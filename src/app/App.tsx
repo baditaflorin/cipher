@@ -244,9 +244,18 @@ export function App() {
           participants: mergedParticipants,
           yState: chat.encodeDocState(nextDoc)
         };
-        void chat
-          .decryptMessages(mergedGroup, chat.getEncryptedMessages(nextDoc))
-          .then(setMessages);
+        void (async () => {
+          const allDecrypted = await chat.decryptMessages(
+            mergedGroup,
+            chat.getEncryptedMessages(nextDoc)
+          );
+          // Apply signed clear command — only owner's verified signature is honoured
+          const clearTs = await chat.getVerifiedClearTimestamp(nextDoc, mergedGroup);
+          const visible = clearTs
+            ? allDecrypted.filter((m) => m.createdAt > clearTs)
+            : allDecrypted;
+          setMessages(visible);
+        })();
         void storage.saveGroup(mergedGroup);
         setGroups((items) =>
           items.map((item) => (item.id === mergedGroup.id ? mergedGroup : item))
@@ -556,16 +565,27 @@ export function App() {
   }
 
   async function handleClearHistory() {
-    if (!doc || !selectedGroup) return;
+    if (!doc || !selectedGroup || !identity) return;
+    if (identity.id !== selectedGroup.ownerId) {
+      setNotice({ tone: "bad", text: "Only the room owner can clear history." });
+      return;
+    }
     if (
       !confirm(
-        "Clear all messages?\n\nThis removes them for everyone currently connected and for anyone who joins later. This cannot be undone."
+        "Clear all messages?\n\nThis hides the entire history for everyone in the room — including people who join later. Only you (as the owner) can do this."
       )
     )
       return;
-    const { clearMessages } = await import("../features/chat/groups");
-    clearMessages(doc);
-    setNotice({ tone: "good", text: "Message history cleared for everyone." });
+    setBusy(true);
+    try {
+      const { postClearCommand } = await import("../features/chat/groups");
+      await postClearCommand(doc, selectedGroup, identity);
+      setNotice({ tone: "good", text: "Message history cleared for everyone." });
+    } catch (error) {
+      setNotice({ tone: "bad", text: errorMessage(error) });
+    } finally {
+      setBusy(false);
+    }
   }
 
   // Open share modal, auto-generate content for the chosen tab
@@ -1050,21 +1070,26 @@ export function App() {
                         className="fixed inset-0 z-10"
                         onClick={() => setShowRoomMenu(false)}
                       />
-                      <div className="absolute right-0 top-full z-20 mt-1 w-52 overflow-hidden rounded-xl border border-white/10 bg-[color:var(--panel)] shadow-2xl">
-                        <button
-                          className="w-full px-4 py-3 text-left text-sm hover:bg-white/5"
-                          onClick={() => {
-                            setShowRoomMenu(false);
-                            void handleClearHistory();
-                          }}
-                          type="button"
-                        >
-                          Clear message history
-                          <p className="mt-0.5 text-xs text-[color:var(--muted)]">
-                            Removes messages for everyone
-                          </p>
-                        </button>
-                        <div className="border-t border-white/10" />
+                      <div className="absolute right-0 top-full z-20 mt-1 w-56 overflow-hidden rounded-xl border border-white/10 bg-[color:var(--panel)] shadow-2xl">
+                        {/* Clear history — owner only (cryptographically enforced) */}
+                        {identity?.id === selectedGroup.ownerId && (
+                          <>
+                            <button
+                              className="w-full px-4 py-3 text-left text-sm hover:bg-white/5"
+                              onClick={() => {
+                                setShowRoomMenu(false);
+                                void handleClearHistory();
+                              }}
+                              type="button"
+                            >
+                              Clear message history
+                              <p className="mt-0.5 text-xs text-[color:var(--muted)]">
+                                Hides all messages for everyone
+                              </p>
+                            </button>
+                            <div className="border-t border-white/10" />
+                          </>
+                        )}
                         <button
                           className="w-full px-4 py-3 text-left text-sm text-red-400 hover:bg-white/5"
                           onClick={() => {

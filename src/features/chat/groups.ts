@@ -21,6 +21,14 @@ import { saveGroup } from "../storage/db";
 
 const messagesKey = "messages";
 const participantsKey = "participants";
+const clearsKey = "clears";
+
+interface ClearCommand {
+  timestamp: string;
+  ownerId: string;
+  /** signDetached of `${groupId}.clear.${timestamp}` with the owner's signSecretKey */
+  signature: string;
+}
 
 export async function createGroupRecord(
   identity: IdentityRecord,
@@ -178,14 +186,55 @@ export function readParticipantsFromDoc(doc: Y.Doc): Participant[] {
 }
 
 /**
- * Delete all messages from the shared Yjs doc.
- * The deletion is a CRDT operation — it propagates to every connected peer
- * via y-webrtc and is included in future yState snapshots, so new joiners
- * also start with a clean slate.
+ * Post a signed "clear history" command to the shared Yjs doc.
+ *
+ * Only the room owner can produce a valid command: the signature covers
+ * `${groupId}.clear.${timestamp}` and is verified by every peer against
+ * the owner's public signing key before the clear is applied.  A non-owner
+ * — even one who edits the client JS — cannot forge a valid signature.
+ *
+ * The messages Y.Array is left untouched (append-only). Peers filter out
+ * messages with createdAt ≤ clearTimestamp at render time.
  */
-export function clearMessages(doc: Y.Doc): void {
-  const arr = doc.getArray<EncryptedChatRecord>(messagesKey);
-  if (arr.length > 0) arr.delete(0, arr.length);
+export async function postClearCommand(
+  doc: Y.Doc,
+  group: GroupRecord,
+  identity: IdentityRecord
+): Promise<void> {
+  if (identity.id !== group.ownerId) {
+    throw new Error("Only the room owner can clear history.");
+  }
+  const timestamp = new Date().toISOString();
+  const payload = `${group.id}.clear.${timestamp}`;
+  const signature = await signDetached(identity.signSecretKey, payload);
+  const cmd: ClearCommand = { timestamp, ownerId: identity.id, signature };
+  doc.getMap<string>(clearsKey).set("v1", JSON.stringify(cmd));
+}
+
+/**
+ * Read and cryptographically verify the latest clear command from the doc.
+ *
+ * Returns the timestamp if the command signature is valid (signed by the
+ * actual room owner), or null if there is no command or the signature does
+ * not verify.  Messages with createdAt ≤ this timestamp should be hidden.
+ */
+export async function getVerifiedClearTimestamp(
+  doc: Y.Doc,
+  group: GroupRecord
+): Promise<string | null> {
+  const raw = doc.getMap<string>(clearsKey).get("v1");
+  if (!raw) return null;
+  try {
+    const cmd = JSON.parse(raw) as ClearCommand;
+    if (cmd.ownerId !== group.ownerId) return null;
+    const owner = group.participants.find((p) => p.id === group.ownerId);
+    if (!owner) return null;
+    const payload = `${group.id}.clear.${cmd.timestamp}`;
+    const ok = await verifyDetached(owner.signPublicKey, cmd.signature, payload);
+    return ok ? cmd.timestamp : null;
+  } catch {
+    return null;
+  }
 }
 
 export function encodeYUpdate(update: Uint8Array): string {
