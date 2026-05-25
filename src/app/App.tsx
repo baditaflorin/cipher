@@ -818,6 +818,8 @@ export function App() {
                 {roomLink && (
                   <button
                     className="button w-full"
+                    data-link={roomLink}
+                    data-testid="copy-room-link"
                     onClick={() => void navigator.clipboard.writeText(roomLink)}
                   >
                     <Copy size={15} /> Copy link

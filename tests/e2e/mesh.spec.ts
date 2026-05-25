@@ -50,19 +50,14 @@ test.describe("room-link two-browser join", () => {
     await pageA.getByRole("button", { name: "Create room" }).click();
     await expect(pageA.getByRole("heading", { name: "Mesh sync test" })).toBeVisible();
 
-    // Click Share → wait for the Share Room panel → extract link via DOM eval
-    // (more reliable than Playwright textarea text-filter which may miss React values).
+    // Click Share → wait for the copy-room-link button → extract link via data-link attr.
     await pageA.getByRole("button", { name: "Share" }).click();
-    await pageA.getByText("Share Room").waitFor({ timeout: 10_000 });
+    await pageA.locator('[data-testid="copy-room-link"]').waitFor({ timeout: 10_000 });
 
-    const roomLink = await pageA.evaluate((): string => {
-      const textareas =
-        document.querySelectorAll<HTMLTextAreaElement>("textarea[readonly]");
-      for (const ta of textareas) {
-        if (ta.value.includes("#/room/")) return ta.value;
-      }
-      return "";
-    });
+    const roomLink =
+      (await pageA
+        .locator('[data-testid="copy-room-link"]')
+        .getAttribute("data-link")) ?? "";
 
     console.log(
       "[DEBUG] roomLink =",

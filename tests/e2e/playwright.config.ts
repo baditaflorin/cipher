@@ -6,6 +6,9 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 
 export default defineConfig({
   testDir: ".",
+  // mesh.spec.ts requires the live y-webrtc signalling server; exclude from smoke.
+  // Run separately with: npm run test:e2e:mesh
+  testIgnore: ["**/mesh.spec.ts"],
   timeout: 30_000,
   use: {
     baseURL: "http://127.0.0.1:4174/cipher/"
