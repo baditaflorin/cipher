@@ -1,6 +1,6 @@
 {
   "name": "cipher",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Static, browser-only encrypted group chat with MLS, WebRTC mesh, local summaries, and no server-held group state.",
   "type": "module",
   "private": true,
