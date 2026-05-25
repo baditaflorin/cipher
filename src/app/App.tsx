@@ -7,6 +7,7 @@ import {
   Github,
   Heart,
   KeyRound,
+  Lock,
   Mic,
   MoreHorizontal,
   Plus,
@@ -70,6 +71,9 @@ export function App() {
   const [modal, setModal] = useState<ModalKind>(null);
   const [shareTab, setShareTab] = useState<ShareTab>("open-link");
   const [showRoomMenu, setShowRoomMenu] = useState(false);
+  const [showOnboarding, setShowOnboarding] = useState(false);
+  const [appQrCode, setAppQrCode] = useState("");
+  const [showCryptoPopover, setShowCryptoPopover] = useState(false);
 
   // Auto-dismiss notice after 4 s
   useEffect(() => {
@@ -77,6 +81,25 @@ export function App() {
     const t = setTimeout(() => setNotice(undefined), 4000);
     return () => clearTimeout(t);
   }, [notice]);
+
+  // Generate app QR once when settings modal first opens
+  useEffect(() => {
+    if (modal !== "settings" || appQrCode) return;
+    void import("qrcode")
+      .then((QRCode) =>
+        QRCode.default.toDataURL("https://baditaflorin.github.io/cipher/", {
+          margin: 1,
+          width: 200,
+          color: { dark: "#14211b", light: "#f6f2e8" }
+        })
+      )
+      .then(setAppQrCode);
+  }, [modal, appQrCode]);
+
+  // Close crypto popover on room switch
+  useEffect(() => {
+    setShowCryptoPopover(false);
+  }, [selectedGroupId]);
 
   // Auto-scroll to newest message
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -296,9 +319,11 @@ export function App() {
       import("../features/storage/db"),
       import("../features/invite/invites")
     ]);
+    const isFirstLaunch = !(await storage.getActiveIdentity());
     const activeIdentity = await identityModule.getOrCreateIdentity();
     let savedGroups = await storage.listGroups();
     setIdentity(activeIdentity);
+    if (isFirstLaunch) setShowOnboarding(true);
 
     try {
       const roomPayload = invites.parseRoomLinkFromHash();
@@ -567,6 +592,22 @@ export function App() {
     setNotice({ tone: "good", text: "Room removed from your device." });
   }
 
+  async function handleResetEverything() {
+    if (
+      !confirm(
+        "Reset everything?\n\nThis permanently deletes your identity, all rooms, and all local data from this browser. You will be treated as a brand new user on reload."
+      )
+    )
+      return;
+    meshRef.current?.destroy();
+    await new Promise<void>((resolve) => {
+      const req = indexedDB.deleteDatabase("cipher-v1");
+      req.onsuccess = () => resolve();
+      req.onerror = () => resolve();
+    });
+    window.location.reload();
+  }
+
   async function handleClearHistory() {
     if (!doc || !selectedGroup || !identity) return;
     if (identity.id !== selectedGroup.ownerId) {
@@ -601,6 +642,71 @@ export function App() {
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-[color:var(--page)] text-[color:var(--ink)]">
+      {/* ── Onboarding (first launch only) ───────────── */}
+      {showOnboarding && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-[color:var(--page)] p-6">
+          <div className="flex w-full max-w-sm flex-col gap-5">
+            {/* Brand */}
+            <div className="flex flex-col items-center gap-3 text-center">
+              <img alt="" className="h-14 w-14" src="/cipher/icon.svg" />
+              <div>
+                <h1 className="text-2xl font-bold tracking-tight">Cipher</h1>
+                <p className="mt-1 text-sm text-[color:var(--muted)]">
+                  Private group chat · No servers · No accounts
+                </p>
+              </div>
+            </div>
+
+            {/* How it works */}
+            <div className="space-y-2">
+              <OnboardBullet
+                icon={<KeyRound size={15} />}
+                title="Keys generated here, stored here"
+                detail="An Ed25519 signing key and X25519 encryption key were created in this browser using a cryptographic random number generator. They never leave your device."
+              />
+              <OnboardBullet
+                icon={<Lock size={15} />}
+                title="Messages encrypted before they leave"
+                detail="XSalsa20-Poly1305 (libsodium) encrypts every message on your device. No server — and no one without the room key — can read them."
+              />
+              <OnboardBullet
+                icon={<Share2 size={15} />}
+                title="Peer-to-peer, no middleman"
+                detail="Rooms sync directly between browsers over WebRTC using a CRDT (Yjs). There is no central server storing your conversations."
+              />
+            </div>
+
+            {/* Display name */}
+            <div>
+              <label className="field-label" htmlFor="onboardName">
+                Your display name
+              </label>
+              <input
+                autoFocus
+                className="input"
+                id="onboardName"
+                onChange={(e) => void handleRename(e.target.value)}
+                placeholder="Choose a name others will see"
+                value={identity?.displayName ?? ""}
+              />
+            </div>
+
+            {/* CTA */}
+            <button
+              className="flex items-center justify-center gap-2 rounded-xl bg-[color:var(--accent)] py-3 text-sm font-bold text-[#14211b] transition-opacity hover:opacity-90 active:opacity-80"
+              onClick={() => setShowOnboarding(false)}
+            >
+              Get started
+            </button>
+
+            <p className="text-center text-[11px] text-[color:var(--muted)]">
+              Your keys are saved in this browser&apos;s IndexedDB — local to this
+              device.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* ── Toast ─────────────────────────────────────── */}
       {notice && (
         <div
@@ -923,6 +1029,50 @@ export function App() {
               )}
             </div>
 
+            {/* Share the app */}
+            <div className="border-t border-white/10 pt-4">
+              <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-[color:var(--muted)]">
+                Share this app
+              </p>
+              {appQrCode ? (
+                <img alt="App QR code" className="qr mx-auto" src={appQrCode} />
+              ) : (
+                <div className="py-4 text-center text-xs text-[color:var(--muted)]">
+                  Generating…
+                </div>
+              )}
+              <p className="mt-2 text-center text-[11px] text-[color:var(--muted)]">
+                baditaflorin.github.io/cipher
+              </p>
+              <button
+                className="button mt-2 w-full text-xs"
+                onClick={() =>
+                  void navigator.clipboard.writeText(
+                    "https://baditaflorin.github.io/cipher/"
+                  )
+                }
+              >
+                <Copy size={13} /> Copy link
+              </button>
+            </div>
+
+            {/* Reset */}
+            <div className="border-t border-white/10 pt-4">
+              <button
+                className="w-full rounded-xl border border-red-500/20 bg-red-500/8 px-4 py-3 text-left transition-colors hover:bg-red-500/14"
+                onClick={() => void handleResetEverything()}
+                type="button"
+              >
+                <div className="flex items-center gap-2 text-sm text-red-400">
+                  <Trash2 size={14} />
+                  Reset everything
+                </div>
+                <p className="mt-0.5 text-xs text-red-400/60">
+                  Deletes your identity and all rooms. Use to test as a new user.
+                </p>
+              </button>
+            </div>
+
             {/* Footer */}
             <div className="flex items-center gap-3 border-t border-white/10 pt-4 text-xs text-[color:var(--muted)]">
               <a className="icon-link" href={buildInfo.repositoryUrl}>
@@ -1043,11 +1193,66 @@ export function App() {
               <header className="flex shrink-0 items-center gap-3 border-b border-white/10 px-5 py-3">
                 <div className="min-w-0 flex-1">
                   <h2 className="truncate font-semibold">{selectedGroup.name}</h2>
-                  <p className="text-xs text-[color:var(--muted)]">
-                    {selectedGroup.participants.length} participants
-                    {meshStatus.connectedPeers > 0 &&
-                      ` · ${meshStatus.connectedPeers} online`}
-                  </p>
+                  <div className="flex items-center gap-2">
+                    <p className="text-xs text-[color:var(--muted)]">
+                      {selectedGroup.participants.length}{" "}
+                      {selectedGroup.participants.length === 1
+                        ? "participant"
+                        : "participants"}
+                      {meshStatus.connectedPeers > 0 &&
+                        ` · ${meshStatus.connectedPeers} online`}
+                    </p>
+                    {/* Crypto info badge */}
+                    <div className="relative">
+                      <button
+                        className="flex items-center gap-1 rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] text-[color:var(--muted)] transition-colors hover:border-[color:var(--accent)]/40 hover:text-[color:var(--accent)]"
+                        onClick={() => setShowCryptoPopover((v) => !v)}
+                        title="View encryption details"
+                        type="button"
+                      >
+                        <ShieldCheck size={10} />
+                        E2E
+                      </button>
+                      {showCryptoPopover && (
+                        <>
+                          <div
+                            className="fixed inset-0 z-10"
+                            onClick={() => setShowCryptoPopover(false)}
+                          />
+                          <div className="absolute left-0 top-full z-20 mt-2 w-64 rounded-xl border border-white/10 bg-[color:var(--panel)] p-4 shadow-2xl">
+                            <p className="mb-3 text-xs font-semibold text-[color:var(--accent)]">
+                              Encryption stack
+                            </p>
+                            <div className="space-y-2">
+                              {[
+                                ["Messages", "XSalsa20-Poly1305"],
+                                ["Key exchange", "X25519 ECDH"],
+                                ["Signatures", "Ed25519"],
+                                ["Library", "libsodium (WASM)"],
+                                ["Sync", "WebRTC · Yjs CRDT"]
+                              ].map(([label, value]) => (
+                                <div
+                                  key={label}
+                                  className="flex items-baseline justify-between gap-2"
+                                >
+                                  <span className="text-xs text-[color:var(--muted)]">
+                                    {label}
+                                  </span>
+                                  <span className="font-mono text-[10px] text-[color:var(--ink)]">
+                                    {value}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                            <p className="mt-3 text-[10px] leading-relaxed text-[color:var(--muted)]">
+                              Keys are generated and stored in your browser only. No
+                              server ever sees your messages.
+                            </p>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  </div>
                 </div>
                 <button
                   className="flex items-center gap-1.5 rounded-xl border border-[color:var(--accent)]/30 bg-[color:var(--accent)]/10 px-3 py-1.5 text-sm font-semibold text-[color:var(--accent)] transition-colors hover:bg-[color:var(--accent)]/18 disabled:opacity-50"
@@ -1289,6 +1494,28 @@ function SheetHeader({ title, onClose }: { title: string; onClose: () => void })
       <button className="opacity-50 hover:opacity-100" onClick={onClose}>
         <X size={18} />
       </button>
+    </div>
+  );
+}
+
+function OnboardBullet({
+  icon,
+  title,
+  detail
+}: {
+  icon: ReactNode;
+  title: string;
+  detail: string;
+}) {
+  return (
+    <div className="flex gap-3 rounded-xl bg-white/4 p-3">
+      <div className="mt-0.5 shrink-0 text-[color:var(--accent)]">{icon}</div>
+      <div>
+        <p className="text-sm font-medium">{title}</p>
+        <p className="mt-0.5 text-xs leading-relaxed text-[color:var(--muted)]">
+          {detail}
+        </p>
+      </div>
     </div>
   );
 }
