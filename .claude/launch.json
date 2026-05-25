@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "cipher-preview",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["scripts/serve-pages-preview.sh"],
+      "port": 4174
+    }
+  ]
+}

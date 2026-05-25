@@ -27,6 +27,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "smoke": "bash scripts/smoke.sh",
+    "test:e2e:mesh": "npx playwright test tests/e2e/mesh.spec.ts --config=tests/e2e/playwright.config.ts --reporter=line",
     "audit": "npm audit --audit-level=high"
   },
   "dependencies": {
