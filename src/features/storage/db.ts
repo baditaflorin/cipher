@@ -86,6 +86,14 @@ export async function saveGroup(group: GroupRecord): Promise<void> {
   await db.put("groups", { ...group, updatedAt: new Date().toISOString() });
 }
 
+export async function deleteGroup(id: string): Promise<void> {
+  const db = await dbPromise;
+  await db.delete("groups", id);
+  // Also clean up any invites associated with this group.
+  const invites = await db.getAllFromIndex("invites", "byGroup", id);
+  for (const invite of invites) await db.delete("invites", invite.id);
+}
+
 export async function saveInvite(invite: InviteRecord): Promise<void> {
   const db = await dbPromise;
   await db.put("invites", invite);

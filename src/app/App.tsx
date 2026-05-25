@@ -13,6 +13,7 @@ import {
   Settings,
   Share2,
   ShieldCheck,
+  Trash2,
   X
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -537,6 +538,17 @@ export function App() {
     await addPlaintextMessage(doc, selectedGroup, identity, transcript, "transcript");
   }
 
+  async function handleDeleteGroup(groupId: string) {
+    if (!confirm("Delete this room? This only removes it from your device.")) return;
+    meshRef.current?.destroy();
+    meshRef.current = undefined;
+    const { deleteGroup } = await import("../features/storage/db");
+    await deleteGroup(groupId);
+    if (selectedGroupId === groupId) setSelectedGroupId(undefined);
+    await reloadGroups();
+    setNotice({ tone: "good", text: "Room removed from your device." });
+  }
+
   // Open share modal, auto-generate content for the chosen tab
   async function openShare(tab: ShareTab) {
     setShareTab(tab);
@@ -793,25 +805,41 @@ export function App() {
             </div>
 
             {/* Security */}
-            <div className="border-t border-white/10 pt-4">
-              <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-[color:var(--muted)]">
+            <div className="border-t border-white/10 pt-4 space-y-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-[color:var(--muted)]">
                 Security
               </p>
-              <StatusRow
-                label="MLS engine"
-                value={mlsOk === undefined ? "not checked" : mlsOk ? "ready" : "failed"}
+              <InfoRow
+                label="End-to-end encryption"
+                value={
+                  mlsOk === undefined
+                    ? "tap to verify"
+                    : mlsOk
+                      ? "✓ working"
+                      : "✗ failed"
+                }
+                detail="Messages are encrypted with MLS before leaving your device. The server never sees plaintext."
               />
-              <StatusRow label="Peers" value={String(meshStatus.connectedPeers)} />
-              <StatusRow
-                label="Local tabs"
-                value={meshStatus.localTabs ? "on" : "off"}
+              <InfoRow
+                label="Other devices online"
+                value={
+                  meshStatus.connectedPeers === 0
+                    ? "none right now"
+                    : `${meshStatus.connectedPeers} connected`
+                }
+                detail="People in the same room who are online and syncing live over WebRTC."
+              />
+              <InfoRow
+                label="This browser"
+                value={meshStatus.localTabs ? "multiple tabs open" : "single tab"}
+                detail="If you open the same room in multiple tabs, they share local state automatically."
               />
               <button
-                className="button mt-2 w-full"
+                className="button w-full"
                 disabled={busy}
                 onClick={() => void handleMlsCheck()}
               >
-                <ShieldCheck size={15} /> Check MLS
+                <ShieldCheck size={15} /> Verify encryption
               </button>
             </div>
 
@@ -900,15 +928,32 @@ export function App() {
           {/* Room list */}
           <div className="flex-1 overflow-y-auto py-2 px-2 space-y-1">
             {groups.map((group) => (
-              <button
-                className={`room-button ${group.id === selectedGroupId ? "room-button-active" : ""}`}
+              <div
+                className={`group/room room-button ${group.id === selectedGroupId ? "room-button-active" : ""}`}
                 key={group.id}
                 onClick={() => setSelectedGroupId(group.id)}
-                type="button"
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => e.key === "Enter" && setSelectedGroupId(group.id)}
               >
                 <span className="flex-1 truncate text-left text-sm">{group.name}</span>
-                <small className="shrink-0">{group.participants.length}</small>
-              </button>
+                <div className="flex items-center gap-1 shrink-0">
+                  <small>{group.participants.length}</small>
+                  {group.ownerId === identity?.id && (
+                    <button
+                      className="ml-1 hidden group-hover/room:flex items-center justify-center rounded p-0.5 opacity-40 hover:opacity-100 hover:text-red-400"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void handleDeleteGroup(group.id);
+                      }}
+                      title="Delete room"
+                      type="button"
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  )}
+                </div>
+              </div>
             ))}
           </div>
 
@@ -982,74 +1027,78 @@ export function App() {
 
               {/* Messages */}
               <div className="flex-1 overflow-y-auto px-4 py-4">
-                {messages.length === 0 ? (
-                  <div className="flex h-full items-center justify-center text-sm text-[color:var(--muted)]">
-                    No messages yet
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    {messages.map((msg) => {
-                      const isOwn = msg.senderId === identity?.id;
-                      return (
-                        <div
-                          key={msg.id}
-                          className={`flex ${isOwn ? "justify-end" : "justify-start"}`}
-                        >
+                <div className="mx-auto max-w-2xl">
+                  {messages.length === 0 ? (
+                    <div className="flex h-32 items-center justify-center text-sm text-[color:var(--muted)]">
+                      No messages yet
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {messages.map((msg) => {
+                        const isOwn = msg.senderId === identity?.id;
+                        return (
                           <div
-                            className={`max-w-[72%] rounded-2xl px-4 py-2.5 ${
-                              isOwn
-                                ? "rounded-br-md bg-[color:var(--accent)] text-[#14211b]"
-                                : "rounded-bl-md bg-white/10"
-                            }`}
+                            key={msg.id}
+                            className={`flex ${isOwn ? "justify-end" : "justify-start"}`}
                           >
-                            {!isOwn && (
-                              <p className="mb-0.5 text-[11px] font-semibold opacity-60">
-                                {msg.senderName}
-                              </p>
-                            )}
-                            <p className="text-sm leading-relaxed overflow-wrap-anywhere whitespace-pre-wrap">
-                              {msg.body}
-                            </p>
-                            <p
-                              className={`mt-0.5 text-[10px] ${isOwn ? "text-right text-black/40" : "text-[color:var(--muted)]"}`}
+                            <div
+                              className={`max-w-[72%] rounded-2xl px-4 py-2.5 ${
+                                isOwn
+                                  ? "rounded-br-md bg-[color:var(--accent)] text-[#14211b]"
+                                  : "rounded-bl-md bg-white/10"
+                              }`}
                             >
-                              {new Date(msg.createdAt).toLocaleTimeString([], {
-                                hour: "2-digit",
-                                minute: "2-digit"
-                              })}
-                              {msg.verified && " ✓"}
-                            </p>
+                              {!isOwn && (
+                                <p className="mb-0.5 text-[11px] font-semibold opacity-60">
+                                  {msg.senderName}
+                                </p>
+                              )}
+                              <p className="text-sm leading-relaxed overflow-wrap-anywhere whitespace-pre-wrap">
+                                {msg.body}
+                              </p>
+                              <p
+                                className={`mt-0.5 text-[10px] ${isOwn ? "text-right text-black/40" : "text-[color:var(--muted)]"}`}
+                              >
+                                {new Date(msg.createdAt).toLocaleTimeString([], {
+                                  hour: "2-digit",
+                                  minute: "2-digit"
+                                })}
+                                {msg.verified && " ✓"}
+                              </p>
+                            </div>
                           </div>
-                        </div>
-                      );
-                    })}
-                    <div ref={messagesEndRef} />
-                  </div>
-                )}
+                        );
+                      })}
+                      <div ref={messagesEndRef} />
+                    </div>
+                  )}
+                </div>
               </div>
 
               {/* Message input */}
               <form
-                className="flex shrink-0 gap-2 border-t border-white/10 p-3"
+                className="shrink-0 border-t border-white/10 px-4 py-3"
                 onSubmit={(e) => {
                   e.preventDefault();
                   void handleSend();
                 }}
               >
-                <input
-                  className="input flex-1"
-                  disabled={busy}
-                  onChange={(e) => setDraft(e.target.value)}
-                  placeholder="Write an encrypted message"
-                  value={draft}
-                />
-                <button
-                  className="icon-button shrink-0"
-                  disabled={busy || !draft.trim()}
-                  type="submit"
-                >
-                  <Send size={16} />
-                </button>
+                <div className="mx-auto flex max-w-2xl items-center gap-2">
+                  <input
+                    className="flex-1 min-w-0 rounded-full border border-white/15 bg-white/6 px-4 py-2 text-sm outline-none placeholder:text-[color:var(--muted)] focus:border-white/30"
+                    disabled={busy}
+                    onChange={(e) => setDraft(e.target.value)}
+                    placeholder="Write an encrypted message"
+                    value={draft}
+                  />
+                  <button
+                    className="icon-button shrink-0"
+                    disabled={busy || !draft.trim()}
+                    type="submit"
+                  >
+                    <Send size={15} />
+                  </button>
+                </div>
               </form>
             </>
           ) : (
@@ -1118,11 +1167,24 @@ function SheetHeader({ title, onClose }: { title: string; onClose: () => void })
   );
 }
 
-function StatusRow({ label, value }: { label: string; value: string }) {
+function InfoRow({
+  label,
+  value,
+  detail
+}: {
+  label: string;
+  value: string;
+  detail: string;
+}) {
   return (
-    <div className="flex items-center justify-between border-t border-white/10 py-2 first:border-t-0">
-      <span className="text-sm text-[color:var(--muted)]">{label}</span>
-      <strong className="text-sm">{value}</strong>
+    <div className="rounded-lg bg-white/4 px-3 py-2.5">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-sm font-medium">{label}</span>
+        <span className="shrink-0 text-xs text-[color:var(--muted)]">{value}</span>
+      </div>
+      <p className="mt-0.5 text-xs text-[color:var(--muted)] leading-relaxed">
+        {detail}
+      </p>
     </div>
   );
 }
