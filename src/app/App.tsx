@@ -701,13 +701,13 @@ export function App() {
                       className="button"
                       disabled={busy}
                       onClick={() => void handleShareRoom()}
-                      title="Anyone with the link or QR joins instantly — no approval needed"
+                      title="Open link — anyone who has it joins, no questions asked"
                       type="button"
                     >
-                      <Share2 size={16} /> Room link
+                      <Share2 size={16} /> Open link
                     </button>
                     <span className="text-[10px] text-[color:var(--muted)]">
-                      anyone, instant
+                      anyone who has it
                     </span>
                   </div>
                   <div className="flex flex-col items-center gap-0.5">
@@ -715,13 +715,13 @@ export function App() {
                       className="button"
                       disabled={busy}
                       onClick={() => void handleCreateInvite()}
-                      title="One-time QR/link — you approve each person before they get the key"
+                      title="Invite a specific person — you pick who gets in"
                       type="button"
                     >
-                      <KeyRound size={16} /> Secure invite
+                      <Users size={16} /> Invite
                     </button>
                     <span className="text-[10px] text-[color:var(--muted)]">
-                      you approve each
+                      you pick who joins
                     </span>
                   </div>
                 </div>
@@ -780,8 +780,8 @@ export function App() {
               <div className="max-w-sm">
                 <h2 className="text-2xl font-semibold">Create or join a room</h2>
                 <p className="mt-2 text-[color:var(--muted)]">
-                  Create a room and click <strong>Share</strong> to get a link. Anyone
-                  who opens it joins immediately — no setup required.
+                  Create a room, then click <strong>Open link</strong> to share with
+                  anyone, or <strong>Invite</strong> to pick someone specific.
                 </p>
                 <button
                   className="button mx-auto mt-4"
@@ -800,13 +800,10 @@ export function App() {
           {notice ? <NoticeBox notice={notice} /> : null}
 
           {roomLink ? (
-            <Panel
-              title="Room Link — anyone joins instantly"
-              icon={<Share2 size={17} />}
-            >
+            <Panel title="Open Link" icon={<Share2 size={17} />}>
               <p className="text-xs text-[color:var(--muted)]">
-                No approval needed. Keep it private — anyone who gets this link can read
-                all messages.
+                Anyone who has this joins instantly — no questions asked. Treat it like
+                a key: only share with people you already trust.
               </p>
               {roomLinkQr ? (
                 <img
@@ -846,18 +843,15 @@ export function App() {
             </Panel>
           ) : null}
 
-          <Panel
-            title="Secure Invite — you approve each joiner"
-            icon={<KeyRound size={17} />}
-          >
+          <Panel title="Invite Someone" icon={<Users size={17} />}>
             {/* ---- Inviter side: show invite QR ---- */}
             {inviteLink ? (
               <div className="space-y-2">
                 {inviteQr ? (
                   <>
                     <p className="text-xs text-[color:var(--muted)]">
-                      Show this QR to the joiner — group key is <strong>never</strong>{" "}
-                      exposed until after you approve.
+                      Show this QR to the person you want to add. They send a join
+                      request; you approve before they get the key.
                     </p>
                     <img
                       alt="Secure invite QR code — show to joiner"
@@ -878,7 +872,8 @@ export function App() {
             {/* ---- Joiner side: camera scanner ---- */}
             <div className="mt-3">
               <p className="mb-2 text-xs text-[color:var(--muted)]">
-                Scan the host&apos;s invite QR to join securely.
+                Scan a room QR shown by the host — works for both invite and room-link
+                QRs.
               </p>
               <button
                 className="button w-full"
@@ -897,7 +892,7 @@ export function App() {
                   </>
                 ) : (
                   <>
-                    <Camera size={16} /> Scan invite QR
+                    <Camera size={16} /> Scan QR
                   </>
                 )}
               </button>
