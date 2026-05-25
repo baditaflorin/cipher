@@ -20,9 +20,7 @@
 
 const DEFAULT_TURN_TOKEN_URL = "https://turn.0docker.com/credentials";
 
-export const STUN_SERVERS: RTCIceServer[] = [
-  { urls: "stun:stun.l.google.com:19302" },
-];
+export const STUN_SERVERS: RTCIceServer[] = [{ urls: "stun:stun.l.google.com:19302" }];
 
 type TurnCredentialResponse = {
   username: string;
@@ -35,8 +33,10 @@ function loadTurnTokenUrl(): string {
   if (typeof localStorage === "undefined") return DEFAULT_TURN_TOKEN_URL;
   const stored = localStorage.getItem("cipher:turnTokenUrl");
   if (stored !== null) return stored;
-  const env = (import.meta as ImportMeta).env?.VITE_TURN_TOKEN_URL as string | undefined;
-  return env ?? DEFAULT_TURN_TOKEN_URL;
+  // Vite's index signature types every env key as `string`, but accessing an
+  // undeclared key returns undefined at runtime; guard with a typeof check.
+  const rawEnv: unknown = import.meta.env["VITE_TURN_TOKEN_URL"];
+  return typeof rawEnv === "string" ? rawEnv : DEFAULT_TURN_TOKEN_URL;
 }
 
 export async function fetchIceServers(): Promise<RTCIceServer[]> {
@@ -54,8 +54,8 @@ export async function fetchIceServers(): Promise<RTCIceServer[]> {
       ...cred.uris.map((u) => ({
         urls: u,
         username: cred.username,
-        credential: cred.password,
-      })),
+        credential: cred.password
+      }))
     ];
   } catch (err) {
     console.warn("[turn] credential fetch failed, falling back to STUN-only:", err);

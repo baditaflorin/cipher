@@ -38,7 +38,9 @@ type EncryptedTransport = {
 // turn-token-server returns fresh HMAC credentials. Future RTCPeerConnections
 // pick up the relay path; existing ones keep their current config.
 const rtcConfig: RTCConfiguration = { iceServers: STUN_SERVERS };
-void fetchIceServers().then((servers) => { rtcConfig.iceServers = servers; });
+void fetchIceServers().then((servers) => {
+  rtcConfig.iceServers = servers;
+});
 
 export class MeshController {
   private readonly peers = new Map<string, RTCPeerConnection>();

@@ -13,7 +13,7 @@ import {
   ShieldCheck,
   Users
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type * as Y from "yjs";
 
@@ -59,6 +59,47 @@ export function App() {
   });
   const [mlsOk, setMlsOk] = useState<boolean>();
   const [busy, setBusy] = useState(false);
+  // true while the joiner is waiting for the inviter to approve via mesh relay
+  const [awaitingWelcome, setAwaitingWelcome] = useState(false);
+
+  // Inviter side: ephemeral handshake rooms keyed by invite ID
+  const inviterRoomsRef = useRef(
+    new Map<string, { postWelcome: (c: string) => void; destroy: () => void }>()
+  );
+  // Joiner side: the room we posted our join-request into
+  const joinerRoomRef = useRef<{ destroy: () => void } | undefined>(undefined);
+  // Which invite ID produced the current pending joinRequest (so we can route the welcome back)
+  const pendingInviteIdRef = useRef<string | undefined>(undefined);
+
+  // Stable callback: only uses stable state setters and ref mutations.
+  // All setX functions from useState are guaranteed stable by React.
+  const onHandshakeJoinRequest = useCallback(
+    (capsule: string, inviteId: string) => {
+      void (async () => {
+        try {
+          const { openJoinRequestCapsule } = await import("../features/invite/invites");
+          const opened = await openJoinRequestCapsule(capsule);
+          pendingInviteIdRef.current = inviteId;
+          setJoinRequest(opened.request);
+          setSelectedGroupId(opened.request.groupId);
+          setNotice({
+            tone: "warn",
+            text: `${opened.request.requester.displayName} is asking to join — received via mesh relay.`
+          });
+        } catch {
+          // Not our invite, already used/expired, or decryption mismatch — ignore silently.
+        }
+      })();
+    },
+    [] // stable: all dependencies are guaranteed stable React state setters
+  );
+
+  // Keep a ref in sync so startInviterRoom's onJoinRequest closure always
+  // calls the current handler even after re-renders.
+  const onHandshakeJoinRequestRef = useRef(onHandshakeJoinRequest);
+  useEffect(() => {
+    onHandshakeJoinRequestRef.current = onHandshakeJoinRequest;
+  }, [onHandshakeJoinRequest]);
 
   const meshRef = useRef<{
     destroy: () => void;
@@ -69,9 +110,22 @@ export function App() {
     () => groups.find((group) => group.id === selectedGroupId),
     [groups, selectedGroupId]
   );
+  // Destroy all handshake rooms on unmount.
+  useEffect(() => {
+    // Capture the Map object at setup time — it is mutated in place, so the
+    // captured reference will still see all rooms added later.
+    const inviterRooms = inviterRoomsRef.current;
+    return () => {
+      for (const room of inviterRooms.values()) room.destroy();
+      inviterRooms.clear();
+      joinerRoomRef.current?.destroy(); // ref is intentionally read at cleanup time
+    };
+  }, []);
+
   useEffect(() => {
     void boot();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // boot is stable (defined once per mount; intentional one-shot)
 
   useEffect(() => {
     if (!selectedGroup || !identity) return;
@@ -136,6 +190,17 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedGroupId, identity?.id]);
 
+  /** Open a handshake room for one invite ID (idempotent — no-op if already open). */
+  async function startInviterRoom(inviteId: string): Promise<void> {
+    if (inviterRoomsRef.current.has(inviteId)) return;
+    const { HandshakeRoom } = await import("../features/invite/handshake");
+    const room = new HandshakeRoom(inviteId);
+    inviterRoomsRef.current.set(inviteId, room);
+    room.onJoinRequest((capsule) => {
+      onHandshakeJoinRequestRef.current?.(capsule, inviteId);
+    });
+  }
+
   async function boot() {
     const [identityModule, storage, invites] = await Promise.all([
       import("../features/identity/identity"),
@@ -151,6 +216,16 @@ export function App() {
       setInviteFromUrl(invites.parseInviteFromHash());
     } catch (error) {
       setNotice({ tone: "bad", text: errorMessage(error) });
+    }
+    // Open handshake rooms for every valid pending invite so the inviter's
+    // browser automatically receives join requests without needing any UI.
+    for (const group of savedGroups) {
+      const groupInvites = await storage.listInvitesForGroup(group.id);
+      for (const invite of groupInvites) {
+        if (invites.checkInviteValidity(invite).ok) {
+          void startInviterRoom(invite.id);
+        }
+      }
     }
   }
 
@@ -196,9 +271,12 @@ export function App() {
     setBusy(true);
     try {
       const { createInvite } = await import("../features/invite/invites");
-      const invite = await createInvite(selectedGroup, identity);
-      setInviteLink(invite.link);
-      setInviteQr(invite.qrDataUrl);
+      const result = await createInvite(selectedGroup, identity);
+      setInviteLink(result.link);
+      setInviteQr(result.qrDataUrl);
+      // Immediately open a handshake room so join requests are received
+      // automatically when the joiner opens the link.
+      void startInviterRoom(result.invite.id);
       setNotice({ tone: "good", text: "One-time invite link created." });
     } catch (error) {
       setNotice({ tone: "bad", text: errorMessage(error) });
@@ -212,10 +290,43 @@ export function App() {
     setBusy(true);
     try {
       const { createJoinRequestCapsule } = await import("../features/invite/invites");
-      setCapsuleOutput(await createJoinRequestCapsule(inviteFromUrl, identity));
+      const capsule = await createJoinRequestCapsule(inviteFromUrl, identity);
+      // Keep the manual fallback: the capsule text is still shown so the user
+      // can copy-paste it if the inviter's browser isn't currently open.
+      setCapsuleOutput(capsule);
+
+      // Also relay automatically via the handshake room.
+      const { HandshakeRoom } = await import("../features/invite/handshake");
+      joinerRoomRef.current?.destroy();
+      const room = new HandshakeRoom(inviteFromUrl.inviteId);
+      joinerRoomRef.current = room;
+      room.postJoinRequest(capsule);
+      setAwaitingWelcome(true);
+
+      // Capture identity now (it is guaranteed non-null at this point).
+      const capturedIdentity = identity;
+      room.onWelcome((welcomeCapsule) => {
+        setAwaitingWelcome(false);
+        void (async () => {
+          try {
+            const { openWelcomeCapsule } = await import("../features/invite/invites");
+            const joined = await openWelcomeCapsule(welcomeCapsule, capturedIdentity);
+            joinerRoomRef.current?.destroy();
+            joinerRoomRef.current = undefined;
+            await reloadGroups(joined.id);
+            setNotice({
+              tone: "good",
+              text: "Welcome received via mesh relay. Group joined!"
+            });
+          } catch (error) {
+            setNotice({ tone: "bad", text: errorMessage(error) });
+          }
+        })();
+      });
+
       setNotice({
         tone: "good",
-        text: "Join request capsule encrypted to the inviter pre-key."
+        text: "Join request relayed to host via mesh. Waiting for approval…"
       });
     } catch (error) {
       setNotice({ tone: "bad", text: errorMessage(error) });
@@ -267,9 +378,18 @@ export function App() {
         doc ? chat.encodeDocState(doc) : freshGroup.yState
       );
       setCapsuleOutput(welcome.capsule);
+      // If this joinRequest arrived via mesh relay, send the welcome back the same way.
+      const sourceInviteId = pendingInviteIdRef.current;
+      if (sourceInviteId) {
+        inviterRoomsRef.current.get(sourceInviteId)?.postWelcome(welcome.capsule);
+        pendingInviteIdRef.current = undefined;
+      }
       await reloadGroups(freshGroup.id);
       setJoinRequest(undefined);
-      setNotice({ tone: "good", text: "Welcome capsule created for the joiner." });
+      setNotice({
+        tone: "good",
+        text: "Welcome capsule created and relayed to joiner."
+      });
     } catch (error) {
       setNotice({ tone: "bad", text: errorMessage(error) });
     } finally {
@@ -543,14 +663,24 @@ export function App() {
                 {inviteFromUrl.host.displayName} invited you to{" "}
                 {inviteFromUrl.groupName}.
               </p>
-              <button
-                className="button mt-3 w-full"
-                disabled={busy}
-                onClick={() => void handleCreateJoinRequest()}
-                type="button"
-              >
-                <KeyRound size={16} /> Create join request
-              </button>
+              {awaitingWelcome ? (
+                <p className="mt-3 text-sm text-[color:var(--muted)]">
+                  Join request sent — waiting for host to approve…
+                  <br />
+                  <span className="text-xs opacity-70">
+                    (Copy the capsule below if you need to send it manually.)
+                  </span>
+                </p>
+              ) : (
+                <button
+                  className="button mt-3 w-full"
+                  disabled={busy}
+                  onClick={() => void handleCreateJoinRequest()}
+                  type="button"
+                >
+                  <KeyRound size={16} /> Create join request
+                </button>
+              )}
             </Panel>
           ) : null}
 
