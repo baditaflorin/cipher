@@ -8,6 +8,7 @@ import {
   Heart,
   KeyRound,
   Mic,
+  MoreHorizontal,
   Plus,
   Send,
   Settings,
@@ -68,6 +69,7 @@ export function App() {
   const [awaitingWelcome, setAwaitingWelcome] = useState(false);
   const [modal, setModal] = useState<ModalKind>(null);
   const [shareTab, setShareTab] = useState<ShareTab>("open-link");
+  const [showRoomMenu, setShowRoomMenu] = useState(false);
 
   // Auto-dismiss notice after 4 s
   useEffect(() => {
@@ -538,8 +540,12 @@ export function App() {
     await addPlaintextMessage(doc, selectedGroup, identity, transcript, "transcript");
   }
 
-  async function handleDeleteGroup(groupId: string) {
-    if (!confirm("Delete this room? This only removes it from your device.")) return;
+  async function handleLeaveGroup(groupId: string) {
+    const isOwner = groups.find((g) => g.id === groupId)?.ownerId === identity?.id;
+    const msg = isOwner
+      ? "Remove this room from your device?\n\nOther members who already have it will keep access — there is no central server to delete it from."
+      : "Leave this room?\n\nThis removes it from your device. The room still exists for other members.";
+    if (!confirm(msg)) return;
     meshRef.current?.destroy();
     meshRef.current = undefined;
     const { deleteGroup } = await import("../features/storage/db");
@@ -547,6 +553,19 @@ export function App() {
     if (selectedGroupId === groupId) setSelectedGroupId(undefined);
     await reloadGroups();
     setNotice({ tone: "good", text: "Room removed from your device." });
+  }
+
+  async function handleClearHistory() {
+    if (!doc || !selectedGroup) return;
+    if (
+      !confirm(
+        "Clear all messages?\n\nThis removes them for everyone currently connected and for anyone who joins later. This cannot be undone."
+      )
+    )
+      return;
+    const { clearMessages } = await import("../features/chat/groups");
+    clearMessages(doc);
+    setNotice({ tone: "good", text: "Message history cleared for everyone." });
   }
 
   // Open share modal, auto-generate content for the chosen tab
@@ -939,19 +958,19 @@ export function App() {
                 <span className="flex-1 truncate text-left text-sm">{group.name}</span>
                 <div className="flex items-center gap-1 shrink-0">
                   <small>{group.participants.length}</small>
-                  {group.ownerId === identity?.id && (
-                    <button
-                      className="ml-1 hidden group-hover/room:flex items-center justify-center rounded p-0.5 opacity-40 hover:opacity-100 hover:text-red-400"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        void handleDeleteGroup(group.id);
-                      }}
-                      title="Delete room"
-                      type="button"
-                    >
-                      <Trash2 size={13} />
-                    </button>
-                  )}
+                  <button
+                    className="ml-1 hidden group-hover/room:flex items-center justify-center rounded p-0.5 opacity-40 hover:opacity-100 hover:text-red-400"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void handleLeaveGroup(group.id);
+                    }}
+                    title={
+                      group.ownerId === identity?.id ? "Remove room" : "Leave room"
+                    }
+                    type="button"
+                  >
+                    <Trash2 size={13} />
+                  </button>
                 </div>
               </div>
             ))}
@@ -1000,6 +1019,57 @@ export function App() {
                 >
                   <Share2 size={15} /> Share
                 </button>
+                {/* Room options menu */}
+                <div className="relative">
+                  <button
+                    className="flex h-9 w-9 items-center justify-center rounded-lg border border-white/10 opacity-60 hover:opacity-100"
+                    onClick={() => setShowRoomMenu((v) => !v)}
+                    title="Room options"
+                    type="button"
+                  >
+                    <MoreHorizontal size={16} />
+                  </button>
+                  {showRoomMenu && (
+                    <>
+                      {/* Backdrop to close on outside click */}
+                      <div
+                        className="fixed inset-0 z-10"
+                        onClick={() => setShowRoomMenu(false)}
+                      />
+                      <div className="absolute right-0 top-full z-20 mt-1 w-52 overflow-hidden rounded-xl border border-white/10 bg-[color:var(--panel)] shadow-2xl">
+                        <button
+                          className="w-full px-4 py-3 text-left text-sm hover:bg-white/5"
+                          onClick={() => {
+                            setShowRoomMenu(false);
+                            void handleClearHistory();
+                          }}
+                          type="button"
+                        >
+                          Clear message history
+                          <p className="mt-0.5 text-xs text-[color:var(--muted)]">
+                            Removes messages for everyone
+                          </p>
+                        </button>
+                        <div className="border-t border-white/10" />
+                        <button
+                          className="w-full px-4 py-3 text-left text-sm text-red-400 hover:bg-white/5"
+                          onClick={() => {
+                            setShowRoomMenu(false);
+                            void handleLeaveGroup(selectedGroup.id);
+                          }}
+                          type="button"
+                        >
+                          {selectedGroup.ownerId === identity?.id
+                            ? "Remove from my device"
+                            : "Leave room"}
+                          <p className="mt-0.5 text-xs text-red-400/60">
+                            Removes it from your device only
+                          </p>
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
               </header>
 
               {/* Join request banner */}

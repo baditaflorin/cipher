@@ -177,6 +177,17 @@ export function readParticipantsFromDoc(doc: Y.Doc): Participant[] {
   return result;
 }
 
+/**
+ * Delete all messages from the shared Yjs doc.
+ * The deletion is a CRDT operation — it propagates to every connected peer
+ * via y-webrtc and is included in future yState snapshots, so new joiners
+ * also start with a clean slate.
+ */
+export function clearMessages(doc: Y.Doc): void {
+  const arr = doc.getArray<EncryptedChatRecord>(messagesKey);
+  if (arr.length > 0) arr.delete(0, arr.length);
+}
+
 export function encodeYUpdate(update: Uint8Array): string {
   let binary = "";
   for (const byte of update) binary += String.fromCharCode(byte);
