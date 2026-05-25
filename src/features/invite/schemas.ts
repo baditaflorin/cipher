@@ -30,6 +30,17 @@ export const joinRequestPayloadSchema = z.object({
   createdAt: z.string()
 });
 
+export const roomLinkPayloadSchema = z.object({
+  v: z.literal(1),
+  type: z.literal("cipher-room"),
+  id: z.string(),
+  name: z.string(),
+  groupKey: z.string(),
+  ownerId: z.string(),
+  createdAt: z.string(),
+  participants: z.array(participantSchema)
+});
+
 export const welcomePayloadSchema = z.object({
   v: z.literal(1),
   type: z.literal("cipher-welcome"),

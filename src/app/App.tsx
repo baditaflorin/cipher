@@ -9,6 +9,7 @@ import {
   Mic,
   Plus,
   Send,
+  Share2,
   ShieldCheck,
   Users
 } from "lucide-react";
@@ -47,6 +48,8 @@ export function App() {
   const [inviteQr, setInviteQr] = useState("");
   const [joinRequest, setJoinRequest] = useState<JoinRequestPayload>();
   const [inviteFromUrl, setInviteFromUrl] = useState<InvitePayload>();
+  // room-link built for the current group (shown after clicking Share)
+  const [roomLink, setRoomLink] = useState("");
   const [notice, setNotice] = useState<Notice>();
   const [aiResult, setAiResult] = useState<SummaryResult>();
   const [transcript, setTranscript] = useState("");
@@ -195,15 +198,40 @@ export function App() {
       import("../features/invite/invites")
     ]);
     const activeIdentity = await identityModule.getOrCreateIdentity();
-    const savedGroups = await storage.listGroups();
+    let savedGroups = await storage.listGroups();
     setIdentity(activeIdentity);
+
+    // --- Room-link (#/room/…): group key is in the URL, auto-join immediately.
+    try {
+      const roomPayload = invites.parseRoomLinkFromHash();
+      if (roomPayload) {
+        // Clear the hash so a reload doesn't re-process it.
+        window.history.replaceState(
+          null,
+          "",
+          window.location.origin + window.location.pathname
+        );
+        const joined = await invites.joinFromRoomLink(roomPayload, activeIdentity);
+        savedGroups = await storage.listGroups();
+        setGroups(savedGroups);
+        setSelectedGroupId(joined.id);
+        setNotice({ tone: "good", text: `Joined "${joined.name}" via room link.` });
+        return; // skip the regular invite-from-hash check
+      }
+    } catch (error) {
+      setNotice({ tone: "bad", text: errorMessage(error) });
+    }
+
     setGroups(savedGroups);
     setSelectedGroupId(savedGroups[0]?.id);
+
+    // --- Invite link (#/join/…): secure one-time handshake.
     try {
       setInviteFromUrl(invites.parseInviteFromHash());
     } catch (error) {
       setNotice({ tone: "bad", text: errorMessage(error) });
     }
+
     // Open handshake rooms for every valid pending invite so the inviter's
     // browser automatically receives join requests without needing any UI.
     for (const group of savedGroups) {
@@ -270,6 +298,18 @@ export function App() {
     } finally {
       setBusy(false);
     }
+  }
+
+  /** Build a room-link for the current group and show it. One click for the
+   *  receiver: open the link → auto-join, no approval needed. */
+  async function handleShareRoom() {
+    if (!selectedGroup) return;
+    const { buildRoomLink } = await import("../features/invite/invites");
+    setRoomLink(buildRoomLink(selectedGroup));
+    setNotice({
+      tone: "good",
+      text: "Share this link — anyone with it joins instantly."
+    });
   }
 
   async function handleCreateJoinRequest() {
@@ -537,14 +577,26 @@ export function App() {
                     {selectedGroup.participants.length} participants · Yjs encrypted log
                   </p>
                 </div>
-                <button
-                  className="button ml-auto"
-                  disabled={busy}
-                  onClick={() => void handleCreateInvite()}
-                  type="button"
-                >
-                  <Link size={16} /> Invite
-                </button>
+                <div className="ml-auto flex gap-2">
+                  <button
+                    className="button"
+                    disabled={busy}
+                    onClick={() => void handleShareRoom()}
+                    title="Share room link — anyone with it joins instantly"
+                    type="button"
+                  >
+                    <Share2 size={16} /> Share
+                  </button>
+                  <button
+                    className="button"
+                    disabled={busy}
+                    onClick={() => void handleCreateInvite()}
+                    title="Secure one-time invite (requires approval)"
+                    type="button"
+                  >
+                    <Link size={16} /> Invite
+                  </button>
+                </div>
               </div>
 
               <div className="message-list">
@@ -600,8 +652,8 @@ export function App() {
               <div className="max-w-sm">
                 <h2 className="text-2xl font-semibold">Create or join a room</h2>
                 <p className="mt-2 text-[color:var(--muted)]">
-                  Identity keys stay in IndexedDB. Group state is exchanged only by
-                  capsules you copy between browsers.
+                  Create a room and click <strong>Share</strong> to get a link. Anyone
+                  who opens it joins immediately — no setup required.
                 </p>
                 <button
                   className="button mx-auto mt-4"
@@ -618,6 +670,15 @@ export function App() {
 
         <aside className="space-y-4">
           {notice ? <NoticeBox notice={notice} /> : null}
+
+          {roomLink ? (
+            <Panel title="Share Room" icon={<Share2 size={17} />}>
+              <p className="text-xs text-[color:var(--muted)]">
+                Anyone with this link joins instantly — no approval needed.
+              </p>
+              <CopyBox value={roomLink} />
+            </Panel>
+          ) : null}
 
           {inviteFromUrl ? (
             <Panel title="Join Invite" icon={<KeyRound size={17} />}>

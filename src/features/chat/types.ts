@@ -84,6 +84,23 @@ export type WelcomePayload = {
   createdAt: string;
 };
 
+/**
+ * Room-link payload — the group key is embedded directly in the URL so the
+ * receiver can join with a single click, no capsule exchange required.
+ * Security model: link confidentiality. Anyone with the link can join and
+ * read past messages. Use the invite flow for tighter access control.
+ */
+export type RoomLinkPayload = {
+  v: 1;
+  type: "cipher-room";
+  id: string;
+  name: string;
+  groupKey: string;
+  ownerId: string;
+  createdAt: string;
+  participants: Participant[];
+};
+
 export type ChatPlaintext = {
   id: string;
   groupId: string;

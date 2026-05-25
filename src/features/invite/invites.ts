@@ -7,6 +7,7 @@ import type {
   InviteRecord,
   JoinRequestPayload,
   PendingJoinRecord,
+  RoomLinkPayload,
   WelcomePayload
 } from "../chat/types";
 import { base64UrlToJson, jsonToBase64Url, randomId } from "../crypto/base64";
@@ -28,6 +29,7 @@ import {
 import {
   invitePayloadSchema,
   joinRequestPayloadSchema,
+  roomLinkPayloadSchema,
   welcomePayloadSchema
 } from "./schemas";
 import { checkInviteValidity } from "./validity";
@@ -60,6 +62,60 @@ export function parseInviteFromHash(
   const marker = "#/join/";
   if (!hash.startsWith(marker)) return undefined;
   return invitePayloadSchema.parse(base64UrlToJson(hash.slice(marker.length)));
+}
+
+// ---------------------------------------------------------------------------
+// Room-link: group key in URL, zero-step join.
+// Security: link confidentiality. Anyone with the link can join and read
+// messages. Use the invite flow when you need tighter access control.
+// ---------------------------------------------------------------------------
+
+export function buildRoomLink(group: GroupRecord): string {
+  const payload: RoomLinkPayload = {
+    v: 1,
+    type: "cipher-room",
+    id: group.id,
+    name: group.name,
+    groupKey: group.groupKey,
+    ownerId: group.ownerId,
+    createdAt: group.createdAt,
+    participants: group.participants
+  };
+  return `${getAppUrl()}#/room/${jsonToBase64Url(payload)}`;
+}
+
+export function parseRoomLinkFromHash(
+  hash = window.location.hash
+): RoomLinkPayload | undefined {
+  const marker = "#/room/";
+  if (!hash.startsWith(marker)) return undefined;
+  return roomLinkPayloadSchema.parse(base64UrlToJson(hash.slice(marker.length)));
+}
+
+/** Import a room from a room-link payload. Returns the existing record if the
+ *  group is already in IndexedDB (idempotent). */
+export async function joinFromRoomLink(
+  payload: RoomLinkPayload,
+  identity: IdentityRecord
+): Promise<GroupRecord> {
+  const existing = await import("../storage/db").then((db) => db.getGroup(payload.id));
+  if (existing) return existing;
+
+  const { toParticipant: tp } = await import("../identity/identity");
+  const me = tp(identity);
+  const group: GroupRecord = {
+    id: payload.id,
+    name: payload.name,
+    groupKey: payload.groupKey,
+    ownerId: payload.ownerId,
+    createdAt: payload.createdAt,
+    updatedAt: new Date().toISOString(),
+    participants: payload.participants.some((p) => p.id === identity.id)
+      ? payload.participants
+      : [...payload.participants, me]
+  };
+  await import("../storage/db").then((db) => db.saveGroup(group));
+  return group;
 }
 
 export async function createInvite(
