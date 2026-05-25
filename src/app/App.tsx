@@ -546,7 +546,7 @@ export function App() {
   }
 
   return (
-    <div className="flex h-screen flex-col overflow-hidden bg-[color:var(--page)] text-[color:var(--ink)]">
+    <div className="flex h-full flex-col overflow-hidden bg-[color:var(--page)] text-[color:var(--ink)]">
       {/* ── Toast ─────────────────────────────────────── */}
       {notice && (
         <div

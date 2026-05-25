@@ -18,8 +18,14 @@
   box-sizing: border-box;
 }
 
+html,
 body {
+  height: 100%;
   margin: 0;
+  overflow: hidden; /* prevent any outer scroll — inner panels scroll themselves */
+}
+
+body {
   background: var(--page);
 }
 
