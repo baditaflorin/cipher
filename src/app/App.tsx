@@ -7,7 +7,6 @@ import {
   Github,
   Heart,
   KeyRound,
-  Link,
   Mic,
   Plus,
   Send,
@@ -697,24 +696,34 @@ export function App() {
                   </p>
                 </div>
                 <div className="ml-auto flex gap-2">
-                  <button
-                    className="button"
-                    disabled={busy}
-                    onClick={() => void handleShareRoom()}
-                    title="Share room link — anyone with it joins instantly"
-                    type="button"
-                  >
-                    <Share2 size={16} /> Share
-                  </button>
-                  <button
-                    className="button"
-                    disabled={busy}
-                    onClick={() => void handleCreateInvite()}
-                    title="Secure one-time invite (requires approval)"
-                    type="button"
-                  >
-                    <Link size={16} /> Invite
-                  </button>
+                  <div className="flex flex-col items-center gap-0.5">
+                    <button
+                      className="button"
+                      disabled={busy}
+                      onClick={() => void handleShareRoom()}
+                      title="Anyone with the link or QR joins instantly — no approval needed"
+                      type="button"
+                    >
+                      <Share2 size={16} /> Room link
+                    </button>
+                    <span className="text-[10px] text-[color:var(--muted)]">
+                      anyone, instant
+                    </span>
+                  </div>
+                  <div className="flex flex-col items-center gap-0.5">
+                    <button
+                      className="button"
+                      disabled={busy}
+                      onClick={() => void handleCreateInvite()}
+                      title="One-time QR/link — you approve each person before they get the key"
+                      type="button"
+                    >
+                      <KeyRound size={16} /> Secure invite
+                    </button>
+                    <span className="text-[10px] text-[color:var(--muted)]">
+                      you approve each
+                    </span>
+                  </div>
                 </div>
               </div>
 
@@ -791,9 +800,13 @@ export function App() {
           {notice ? <NoticeBox notice={notice} /> : null}
 
           {roomLink ? (
-            <Panel title="Share Room" icon={<Share2 size={17} />}>
+            <Panel
+              title="Room Link — anyone joins instantly"
+              icon={<Share2 size={17} />}
+            >
               <p className="text-xs text-[color:var(--muted)]">
-                Anyone with this link or QR joins instantly — no approval needed.
+                No approval needed. Keep it private — anyone who gets this link can read
+                all messages.
               </p>
               {roomLinkQr ? (
                 <img
@@ -833,7 +846,10 @@ export function App() {
             </Panel>
           ) : null}
 
-          <Panel title="Invite Capsules" icon={<Link size={17} />}>
+          <Panel
+            title="Secure Invite — you approve each joiner"
+            icon={<KeyRound size={17} />}
+          >
             {/* ---- Inviter side: show invite QR ---- */}
             {inviteLink ? (
               <div className="space-y-2">
