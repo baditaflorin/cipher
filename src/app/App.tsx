@@ -1,5 +1,7 @@
 import {
   Bot,
+  Camera,
+  CameraOff,
   Check,
   Copy,
   Github,
@@ -30,6 +32,7 @@ import type {
   InvitePayload,
   JoinRequestPayload
 } from "../features/chat/types";
+import { useQRScanner } from "../features/invite/useQRScanner";
 import type { AwarenessStatus } from "../features/mesh/types";
 
 type Notice = { tone: "good" | "warn" | "bad"; text: string };
@@ -50,6 +53,8 @@ export function App() {
   const [inviteFromUrl, setInviteFromUrl] = useState<InvitePayload>();
   // room-link built for the current group (shown after clicking Share)
   const [roomLink, setRoomLink] = useState("");
+  // data-URL QR for the room link
+  const [roomLinkQr, setRoomLinkQr] = useState("");
   const [notice, setNotice] = useState<Notice>();
   const [aiResult, setAiResult] = useState<SummaryResult>();
   const [transcript, setTranscript] = useState("");
@@ -101,12 +106,95 @@ export function App() {
     onHandshakeJoinRequestRef.current = onHandshakeJoinRequest;
   }, [onHandshakeJoinRequest]);
 
+  // ---- QR scanner (joiner side) ----------------------------------------
+  // Handles any URL the camera picks up: invite links and room links.
+  const handleScannedUrl = useCallback(
+    (text: string) => {
+      void (async () => {
+        try {
+          const url = new URL(text);
+          const hash = url.hash;
+
+          if (hash.startsWith("#/join/")) {
+            // Secure invite: parse payload, auto-trigger join request.
+            const { parseInviteFromHash } = await import("../features/invite/invites");
+            const payload = parseInviteFromHash(hash);
+            if (!payload) return;
+            scanner.stop();
+            setInviteFromUrl(payload);
+            // Immediately fire the join request — joiner doesn't need to click anything.
+            if (!identity) return;
+            const { createJoinRequestCapsule } =
+              await import("../features/invite/invites");
+            const capsule = await createJoinRequestCapsule(payload, identity);
+            setCapsuleOutput(capsule);
+
+            const { HandshakeRoom } = await import("../features/invite/handshake");
+            joinerRoomRef.current?.destroy();
+            const room = new HandshakeRoom(payload.inviteId);
+            joinerRoomRef.current = room;
+            room.postJoinRequest(capsule);
+            setAwaitingWelcome(true);
+
+            const capturedIdentity = identity;
+            room.onWelcome((welcomeCapsule) => {
+              setAwaitingWelcome(false);
+              void (async () => {
+                try {
+                  const { openWelcomeCapsule } =
+                    await import("../features/invite/invites");
+                  const joined = await openWelcomeCapsule(
+                    welcomeCapsule,
+                    capturedIdentity
+                  );
+                  joinerRoomRef.current?.destroy();
+                  joinerRoomRef.current = undefined;
+                  await reloadGroups(joined.id);
+                  setNotice({
+                    tone: "good",
+                    text: "Welcome received via mesh relay. Group joined!"
+                  });
+                } catch (error) {
+                  setNotice({ tone: "bad", text: errorMessage(error) });
+                }
+              })();
+            });
+
+            setNotice({
+              tone: "good",
+              text: "QR scanned — join request sent. Waiting for host to approve…"
+            });
+          } else if (hash.startsWith("#/room/")) {
+            // Room link: auto-join immediately.
+            if (!identity) return;
+            scanner.stop();
+            const { parseRoomLinkFromHash, joinFromRoomLink } =
+              await import("../features/invite/invites");
+            const payload = parseRoomLinkFromHash(hash);
+            if (!payload) return;
+            const joined = await joinFromRoomLink(payload, identity);
+            await reloadGroups(joined.id);
+            setNotice({ tone: "good", text: `Joined "${joined.name}" via QR scan.` });
+          }
+        } catch {
+          setNotice({ tone: "bad", text: "QR payload not recognised." });
+        }
+      })();
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [identity] // reloadGroups is defined in the same component and is stable enough
+  );
+
+  const scanner = useQRScanner({
+    onScan: (r) => handleScannedUrl(r.text)
+  });
+
   const meshRef = useRef<{ destroy: () => void }>(undefined);
   const selectedGroup = useMemo(
     () => groups.find((group) => group.id === selectedGroupId),
     [groups, selectedGroupId]
   );
-  // Destroy all handshake rooms on unmount.
+  // Destroy all handshake rooms and stop camera on unmount.
   useEffect(() => {
     // Capture the Map object at setup time — it is mutated in place, so the
     // captured reference will still see all rooms added later.
@@ -115,7 +203,10 @@ export function App() {
       for (const room of inviterRooms.values()) room.destroy();
       inviterRooms.clear();
       joinerRoomRef.current?.destroy(); // ref is intentionally read at cleanup time
+      scanner.stop();
     };
+    // scanner.stop is stable (useCallback with no deps that change)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -300,15 +391,24 @@ export function App() {
     }
   }
 
-  /** Build a room-link for the current group and show it. One click for the
-   *  receiver: open the link → auto-join, no approval needed. */
+  /** Build a room-link for the current group, generate a QR, and show both. */
   async function handleShareRoom() {
     if (!selectedGroup) return;
-    const { buildRoomLink } = await import("../features/invite/invites");
-    setRoomLink(buildRoomLink(selectedGroup));
+    const [{ buildRoomLink }, QRCode] = await Promise.all([
+      import("../features/invite/invites"),
+      import("qrcode")
+    ]);
+    const link = buildRoomLink(selectedGroup);
+    const qr = await QRCode.toDataURL(link, {
+      margin: 1,
+      width: 240,
+      color: { dark: "#14211b", light: "#f6f2e8" }
+    });
+    setRoomLink(link);
+    setRoomLinkQr(qr);
     setNotice({
       tone: "good",
-      text: "Share this link — anyone with it joins instantly."
+      text: "Share this link or QR — anyone with it joins instantly."
     });
   }
 
@@ -674,8 +774,15 @@ export function App() {
           {roomLink ? (
             <Panel title="Share Room" icon={<Share2 size={17} />}>
               <p className="text-xs text-[color:var(--muted)]">
-                Anyone with this link joins instantly — no approval needed.
+                Anyone with this link or QR joins instantly — no approval needed.
               </p>
+              {roomLinkQr ? (
+                <img
+                  alt="Room QR code — scan to join instantly"
+                  className="qr mx-auto mt-2"
+                  src={roomLinkQr}
+                />
+              ) : null}
               <CopyBox value={roomLink} />
             </Panel>
           ) : null}
@@ -708,40 +815,106 @@ export function App() {
           ) : null}
 
           <Panel title="Invite Capsules" icon={<Link size={17} />}>
+            {/* ---- Inviter side: show invite QR ---- */}
             {inviteLink ? (
               <div className="space-y-2">
-                <textarea className="textarea" readOnly value={inviteLink} />
                 {inviteQr ? (
-                  <img alt="Invite QR code" className="qr" src={inviteQr} />
+                  <>
+                    <p className="text-xs text-[color:var(--muted)]">
+                      Show this QR to the joiner — group key is <strong>never</strong>{" "}
+                      exposed until after you approve.
+                    </p>
+                    <img
+                      alt="Secure invite QR code — show to joiner"
+                      className="qr mx-auto"
+                      src={inviteQr}
+                    />
+                  </>
                 ) : null}
+                <details className="mt-1">
+                  <summary className="cursor-pointer text-xs text-[color:var(--muted)]">
+                    copy invite link
+                  </summary>
+                  <textarea className="textarea mt-1" readOnly value={inviteLink} />
+                </details>
               </div>
             ) : null}
-            <textarea
-              className="textarea mt-2"
-              onChange={(event) => setCapsuleInput(event.target.value)}
-              placeholder="Paste join request or welcome capsule"
-              value={capsuleInput}
-            />
-            <div className="mt-2 flex gap-2">
+
+            {/* ---- Joiner side: camera scanner ---- */}
+            <div className="mt-3">
+              <p className="mb-2 text-xs text-[color:var(--muted)]">
+                Scan the host&apos;s invite QR to join securely.
+              </p>
               <button
-                className="button flex-1"
-                disabled={busy || !capsuleInput.trim()}
-                onClick={() => void handleImportCapsule()}
+                className="button w-full"
+                onClick={() => {
+                  if (scanner.scanning) {
+                    scanner.stop();
+                  } else {
+                    void scanner.start();
+                  }
+                }}
                 type="button"
               >
-                <KeyRound size={16} /> Open
+                {scanner.scanning ? (
+                  <>
+                    <CameraOff size={16} /> Stop scanner
+                  </>
+                ) : (
+                  <>
+                    <Camera size={16} /> Scan invite QR
+                  </>
+                )}
               </button>
-              {joinRequest ? (
-                <button
-                  className="button flex-1"
-                  disabled={busy}
-                  onClick={() => void handleApproveJoin()}
-                  type="button"
-                >
-                  <Check size={16} /> Approve
-                </button>
+              {scanner.scanning && (
+                <video
+                  ref={scanner.videoRef}
+                  muted
+                  playsInline
+                  autoPlay
+                  className="mt-2 w-full rounded-lg"
+                  style={{ maxHeight: "200px", objectFit: "cover" }}
+                />
+              )}
+              {scanner.error ? (
+                <p className="mt-1 text-xs text-red-400">⚠ {scanner.error}</p>
               ) : null}
             </div>
+
+            {/* ---- Manual fallback ---- */}
+            <details className="mt-3">
+              <summary className="cursor-pointer text-xs text-[color:var(--muted)]">
+                manual capsule exchange (fallback)
+              </summary>
+              <textarea
+                className="textarea mt-2"
+                onChange={(event) => setCapsuleInput(event.target.value)}
+                placeholder="Paste join request or welcome capsule"
+                value={capsuleInput}
+              />
+              <div className="mt-2 flex gap-2">
+                <button
+                  className="button flex-1"
+                  disabled={busy || !capsuleInput.trim()}
+                  onClick={() => void handleImportCapsule()}
+                  type="button"
+                >
+                  <KeyRound size={16} /> Open
+                </button>
+              </div>
+            </details>
+
+            {joinRequest ? (
+              <button
+                className="button mt-3 w-full"
+                disabled={busy}
+                onClick={() => void handleApproveJoin()}
+                type="button"
+              >
+                <Check size={16} /> Approve join request from{" "}
+                {joinRequest.requester.displayName}
+              </button>
+            ) : null}
             {capsuleOutput ? <CopyBox value={capsuleOutput} /> : null}
           </Panel>
 
