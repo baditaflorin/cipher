@@ -10,11 +10,12 @@ import {
   Mic,
   Plus,
   Send,
+  Settings,
   Share2,
   ShieldCheck,
-  Users
+  X
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type * as Y from "yjs";
 
@@ -35,6 +36,8 @@ import { useQRScanner } from "../features/invite/useQRScanner";
 import type { AwarenessStatus } from "../features/mesh/types";
 
 type Notice = { tone: "good" | "warn" | "bad"; text: string };
+type ModalKind = "share" | "settings" | null;
+type ShareTab = "open-link" | "invite";
 
 export function App() {
   const [identity, setIdentity] = useState<IdentityRecord>();
@@ -50,9 +53,7 @@ export function App() {
   const [inviteQr, setInviteQr] = useState("");
   const [joinRequest, setJoinRequest] = useState<JoinRequestPayload>();
   const [inviteFromUrl, setInviteFromUrl] = useState<InvitePayload>();
-  // room-link built for the current group (shown after clicking Share)
   const [roomLink, setRoomLink] = useState("");
-  // data-URL QR for the room link
   const [roomLinkQr, setRoomLinkQr] = useState("");
   const [notice, setNotice] = useState<Notice>();
   const [aiResult, setAiResult] = useState<SummaryResult>();
@@ -63,50 +64,53 @@ export function App() {
   });
   const [mlsOk, setMlsOk] = useState<boolean>();
   const [busy, setBusy] = useState(false);
-  // true while the joiner is waiting for the inviter to approve via mesh relay
   const [awaitingWelcome, setAwaitingWelcome] = useState(false);
+  const [modal, setModal] = useState<ModalKind>(null);
+  const [shareTab, setShareTab] = useState<ShareTab>("open-link");
 
-  // Inviter side: ephemeral handshake rooms keyed by invite ID
+  // Auto-dismiss notice after 4 s
+  useEffect(() => {
+    if (!notice) return;
+    const t = setTimeout(() => setNotice(undefined), 4000);
+    return () => clearTimeout(t);
+  }, [notice]);
+
+  // Auto-scroll to newest message
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
   const inviterRoomsRef = useRef(
     new Map<string, { postWelcome: (c: string) => void; destroy: () => void }>()
   );
-  // Joiner side: the room we posted our join-request into
   const joinerRoomRef = useRef<{ destroy: () => void } | undefined>(undefined);
-  // Which invite ID produced the current pending joinRequest (so we can route the welcome back)
   const pendingInviteIdRef = useRef<string | undefined>(undefined);
 
-  // Stable callback: only uses stable state setters and ref mutations.
-  // All setX functions from useState are guaranteed stable by React.
-  const onHandshakeJoinRequest = useCallback(
-    (capsule: string, inviteId: string) => {
-      void (async () => {
-        try {
-          const { openJoinRequestCapsule } = await import("../features/invite/invites");
-          const opened = await openJoinRequestCapsule(capsule);
-          pendingInviteIdRef.current = inviteId;
-          setJoinRequest(opened.request);
-          setSelectedGroupId(opened.request.groupId);
-          setNotice({
-            tone: "warn",
-            text: `${opened.request.requester.displayName} is asking to join — received via mesh relay.`
-          });
-        } catch {
-          // Not our invite, already used/expired, or decryption mismatch — ignore silently.
-        }
-      })();
-    },
-    [] // stable: all dependencies are guaranteed stable React state setters
-  );
+  const onHandshakeJoinRequest = useCallback((capsule: string, inviteId: string) => {
+    void (async () => {
+      try {
+        const { openJoinRequestCapsule } = await import("../features/invite/invites");
+        const opened = await openJoinRequestCapsule(capsule);
+        pendingInviteIdRef.current = inviteId;
+        setJoinRequest(opened.request);
+        setSelectedGroupId(opened.request.groupId);
+        setNotice({
+          tone: "warn",
+          text: `${opened.request.requester.displayName} wants to join`
+        });
+      } catch {
+        // Not our invite — ignore silently.
+      }
+    })();
+  }, []);
 
-  // Keep a ref in sync so startInviterRoom's onJoinRequest closure always
-  // calls the current handler even after re-renders.
   const onHandshakeJoinRequestRef = useRef(onHandshakeJoinRequest);
   useEffect(() => {
     onHandshakeJoinRequestRef.current = onHandshakeJoinRequest;
   }, [onHandshakeJoinRequest]);
 
-  // ---- QR scanner (joiner side) ----------------------------------------
-  // Handles any URL the camera picks up: invite links and room links.
+  // QR scanner — handles both invite and room-link QRs
   const handleScannedUrl = useCallback(
     (text: string) => {
       void (async () => {
@@ -115,13 +119,11 @@ export function App() {
           const hash = url.hash;
 
           if (hash.startsWith("#/join/")) {
-            // Secure invite: parse payload, auto-trigger join request.
             const { parseInviteFromHash } = await import("../features/invite/invites");
             const payload = parseInviteFromHash(hash);
             if (!payload) return;
             scanner.stop();
             setInviteFromUrl(payload);
-            // Immediately fire the join request — joiner doesn't need to click anything.
             if (!identity) return;
             const { createJoinRequestCapsule } =
               await import("../features/invite/invites");
@@ -149,10 +151,7 @@ export function App() {
                   joinerRoomRef.current?.destroy();
                   joinerRoomRef.current = undefined;
                   await reloadGroups(joined.id);
-                  setNotice({
-                    tone: "good",
-                    text: "Welcome received via mesh relay. Group joined!"
-                  });
+                  setNotice({ tone: "good", text: "Joined! Welcome." });
                 } catch (error) {
                   setNotice({ tone: "bad", text: errorMessage(error) });
                 }
@@ -161,10 +160,9 @@ export function App() {
 
             setNotice({
               tone: "good",
-              text: "QR scanned — join request sent. Waiting for host to approve…"
+              text: "Join request sent. Waiting for approval…"
             });
           } else if (hash.startsWith("#/room/")) {
-            // Room link: auto-join immediately.
             if (!identity) return;
             scanner.stop();
             const { parseRoomLinkFromHash, joinFromRoomLink } =
@@ -173,45 +171,38 @@ export function App() {
             if (!payload) return;
             const joined = await joinFromRoomLink(payload, identity);
             await reloadGroups(joined.id);
-            setNotice({ tone: "good", text: `Joined "${joined.name}" via QR scan.` });
+            setNotice({ tone: "good", text: `Joined "${joined.name}"` });
           }
         } catch {
-          setNotice({ tone: "bad", text: "QR payload not recognised." });
+          setNotice({ tone: "bad", text: "QR not recognised." });
         }
       })();
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [identity] // reloadGroups is defined in the same component and is stable enough
+    [identity]
   );
 
-  const scanner = useQRScanner({
-    onScan: (r) => handleScannedUrl(r.text)
-  });
+  const scanner = useQRScanner({ onScan: (r) => handleScannedUrl(r.text) });
 
   const meshRef = useRef<{ destroy: () => void }>(undefined);
-  const selectedGroup = useMemo(
-    () => groups.find((group) => group.id === selectedGroupId),
-    [groups, selectedGroupId]
-  );
-  // Destroy all handshake rooms and stop camera on unmount.
+
+  const selectedGroup = groups.find((g) => g.id === selectedGroupId);
+
   useEffect(() => {
-    // Capture the Map object at setup time — it is mutated in place, so the
-    // captured reference will still see all rooms added later.
     const inviterRooms = inviterRoomsRef.current;
     return () => {
       for (const room of inviterRooms.values()) room.destroy();
       inviterRooms.clear();
-      joinerRoomRef.current?.destroy(); // ref is intentionally read at cleanup time
+      joinerRoomRef.current?.destroy();
       scanner.stop();
     };
-    // scanner.stop is stable (useCallback with no deps that change)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
     void boot();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // boot is stable (defined once per mount; intentional one-shot)
+  }, []);
 
   useEffect(() => {
     if (!selectedGroup || !identity) return;
@@ -226,13 +217,7 @@ export function App() {
         import("../features/identity/identity")
       ]);
       const nextDoc = chat.createDocFromGroup(selectedGroup);
-
-      // Announce ourselves into the shared participants map so every peer
-      // (including any peer who joined via room-link) sees us in the roster.
       chat.writeParticipantToDoc(nextDoc, identityModule.toParticipant(identity));
-
-      // MeshController now uses y-webrtc: peers in the same group auto-discover
-      // each other via wss://turn.0docker.com/ws and sync the Yjs doc directly.
       const mesh = new meshModule.MeshController(selectedGroup, nextDoc, setMeshStatus);
 
       if (cancelled) {
@@ -245,20 +230,17 @@ export function App() {
       setDoc(nextDoc);
 
       const refresh = () => {
-        // Merge participants written by all peers into the local group record.
         const docParticipants = chat.readParticipantsFromDoc(nextDoc);
         const participantMap = new Map(
           selectedGroup.participants.map((p) => [p.id, p])
         );
         docParticipants.forEach((p) => participantMap.set(p.id, p));
         const mergedParticipants = [...participantMap.values()];
-
         const mergedGroup = {
           ...selectedGroup,
           participants: mergedParticipants,
           yState: chat.encodeDocState(nextDoc)
         };
-
         void chat
           .decryptMessages(mergedGroup, chat.getEncryptedMessages(nextDoc))
           .then(setMessages);
@@ -268,15 +250,10 @@ export function App() {
         );
       };
 
-      // y-webrtc broadcasts every doc change automatically; just refresh UI.
-      const handleUpdate = () => {
-        refresh();
-      };
-
-      nextDoc.on("update", handleUpdate);
+      nextDoc.on("update", refresh);
       refresh();
       cleanup = () => {
-        nextDoc.off("update", handleUpdate);
+        nextDoc.off("update", refresh);
         mesh.destroy();
       };
     })();
@@ -285,11 +262,9 @@ export function App() {
       cancelled = true;
       cleanup();
     };
-    // Recreate the document only when the selected room or browser identity changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedGroupId, identity?.id]);
 
-  /** Open a handshake room for one invite ID (idempotent — no-op if already open). */
   async function startInviterRoom(inviteId: string): Promise<void> {
     if (inviterRoomsRef.current.has(inviteId)) return;
     const { HandshakeRoom } = await import("../features/invite/handshake");
@@ -310,11 +285,9 @@ export function App() {
     let savedGroups = await storage.listGroups();
     setIdentity(activeIdentity);
 
-    // --- Room-link (#/room/…): group key is in the URL, auto-join immediately.
     try {
       const roomPayload = invites.parseRoomLinkFromHash();
       if (roomPayload) {
-        // Clear the hash so a reload doesn't re-process it.
         window.history.replaceState(
           null,
           "",
@@ -324,8 +297,8 @@ export function App() {
         savedGroups = await storage.listGroups();
         setGroups(savedGroups);
         setSelectedGroupId(joined.id);
-        setNotice({ tone: "good", text: `Joined "${joined.name}" via room link.` });
-        return; // skip the regular invite-from-hash check
+        setNotice({ tone: "good", text: `Joined "${joined.name}"` });
+        return;
       }
     } catch (error) {
       setNotice({ tone: "bad", text: errorMessage(error) });
@@ -334,15 +307,12 @@ export function App() {
     setGroups(savedGroups);
     setSelectedGroupId(savedGroups[0]?.id);
 
-    // --- Invite link (#/join/…): secure one-time handshake.
     try {
       setInviteFromUrl(invites.parseInviteFromHash());
     } catch (error) {
       setNotice({ tone: "bad", text: errorMessage(error) });
     }
 
-    // Open handshake rooms for every valid pending invite so the inviter's
-    // browser automatically receives join requests without needing any UI.
     for (const group of savedGroups) {
       const groupInvites = await storage.listInvitesForGroup(group.id);
       for (const invite of groupInvites) {
@@ -354,8 +324,8 @@ export function App() {
   }
 
   async function reloadGroups(selectId?: string) {
-    const savedGroups = await import("../features/storage/db").then((storage) =>
-      storage.listGroups()
+    const savedGroups = await import("../features/storage/db").then((s) =>
+      s.listGroups()
     );
     setGroups(savedGroups);
     setSelectedGroupId(selectId ?? selectedGroupId ?? savedGroups[0]?.id);
@@ -368,7 +338,7 @@ export function App() {
       const { createGroupRecord } = await import("../features/chat/groups");
       const group = await createGroupRecord(identity, newGroupName);
       await reloadGroups(group.id);
-      setNotice({ tone: "good", text: "Room created in this browser." });
+      setNotice({ tone: "good", text: "Room created." });
     } catch (error) {
       setNotice({ tone: "bad", text: errorMessage(error) });
     } finally {
@@ -398,10 +368,7 @@ export function App() {
       const result = await createInvite(selectedGroup, identity);
       setInviteLink(result.link);
       setInviteQr(result.qrDataUrl);
-      // Immediately open a handshake room so join requests are received
-      // automatically when the joiner opens the link.
       void startInviterRoom(result.invite.id);
-      setNotice({ tone: "good", text: "One-time invite link created." });
     } catch (error) {
       setNotice({ tone: "bad", text: errorMessage(error) });
     } finally {
@@ -409,7 +376,6 @@ export function App() {
     }
   }
 
-  /** Build a room-link for the current group, generate a QR, and show both. */
   async function handleShareRoom() {
     if (!selectedGroup) return;
     const [{ buildRoomLink }, QRCode] = await Promise.all([
@@ -424,10 +390,6 @@ export function App() {
     });
     setRoomLink(link);
     setRoomLinkQr(qr);
-    setNotice({
-      tone: "good",
-      text: "Share this link or QR — anyone with it joins instantly."
-    });
   }
 
   async function handleCreateJoinRequest() {
@@ -436,19 +398,16 @@ export function App() {
     try {
       const { createJoinRequestCapsule } = await import("../features/invite/invites");
       const capsule = await createJoinRequestCapsule(inviteFromUrl, identity);
-      // Keep the manual fallback: the capsule text is still shown so the user
-      // can copy-paste it if the inviter's browser isn't currently open.
       setCapsuleOutput(capsule);
 
-      // Also relay automatically via the handshake room.
       const { HandshakeRoom } = await import("../features/invite/handshake");
       joinerRoomRef.current?.destroy();
       const room = new HandshakeRoom(inviteFromUrl.inviteId);
       joinerRoomRef.current = room;
       room.postJoinRequest(capsule);
       setAwaitingWelcome(true);
+      setInviteFromUrl(undefined);
 
-      // Capture identity now (it is guaranteed non-null at this point).
       const capturedIdentity = identity;
       room.onWelcome((welcomeCapsule) => {
         setAwaitingWelcome(false);
@@ -459,20 +418,14 @@ export function App() {
             joinerRoomRef.current?.destroy();
             joinerRoomRef.current = undefined;
             await reloadGroups(joined.id);
-            setNotice({
-              tone: "good",
-              text: "Welcome received via mesh relay. Group joined!"
-            });
+            setNotice({ tone: "good", text: "Joined! Welcome." });
           } catch (error) {
             setNotice({ tone: "bad", text: errorMessage(error) });
           }
         })();
       });
 
-      setNotice({
-        tone: "good",
-        text: "Join request relayed to host via mesh. Waiting for approval…"
-      });
+      setNotice({ tone: "good", text: "Join request sent. Waiting for approval…" });
     } catch (error) {
       setNotice({ tone: "bad", text: errorMessage(error) });
     } finally {
@@ -488,7 +441,7 @@ export function App() {
       const joined = await openWelcomeCapsule(capsuleInput, identity);
       await reloadGroups(joined.id);
       setCapsuleInput("");
-      setNotice({ tone: "good", text: "Welcome capsule opened. Group joined." });
+      setNotice({ tone: "good", text: "Group joined." });
     } catch {
       try {
         const { openJoinRequestCapsule } = await import("../features/invite/invites");
@@ -497,7 +450,7 @@ export function App() {
         setSelectedGroupId(opened.request.groupId);
         setNotice({
           tone: "warn",
-          text: `${opened.request.requester.displayName} is asking to join.`
+          text: `${opened.request.requester.displayName} wants to join.`
         });
       } catch (error) {
         setNotice({ tone: "bad", text: errorMessage(error) });
@@ -523,7 +476,6 @@ export function App() {
         doc ? chat.encodeDocState(doc) : freshGroup.yState
       );
       setCapsuleOutput(welcome.capsule);
-      // If this joinRequest arrived via mesh relay, send the welcome back the same way.
       const sourceInviteId = pendingInviteIdRef.current;
       if (sourceInviteId) {
         inviterRoomsRef.current.get(sourceInviteId)?.postWelcome(welcome.capsule);
@@ -531,10 +483,7 @@ export function App() {
       }
       await reloadGroups(freshGroup.id);
       setJoinRequest(undefined);
-      setNotice({
-        tone: "good",
-        text: "Welcome capsule created and relayed to joiner."
-      });
+      setNotice({ tone: "good", text: "Approved — they're in." });
     } catch (error) {
       setNotice({ tone: "bad", text: errorMessage(error) });
     } finally {
@@ -566,9 +515,7 @@ export function App() {
   async function handleMlsCheck() {
     setBusy(true);
     try {
-      const result = await import("../features/mls/mls").then((module) =>
-        module.mlsSelfTest()
-      );
+      const result = await import("../features/mls/mls").then((m) => m.mlsSelfTest());
       setMlsOk(result);
     } catch {
       setMlsOk(false);
@@ -590,422 +537,584 @@ export function App() {
     await addPlaintextMessage(doc, selectedGroup, identity, transcript, "transcript");
   }
 
+  // Open share modal, auto-generate content for the chosen tab
+  async function openShare(tab: ShareTab) {
+    setShareTab(tab);
+    setModal("share");
+    if (tab === "open-link" && !roomLink) await handleShareRoom();
+    if (tab === "invite" && !inviteLink) await handleCreateInvite();
+  }
+
   return (
-    <main className="min-h-screen bg-[color:var(--page)] text-[color:var(--ink)]">
-      <header className="border-b border-white/10 bg-[color:var(--panel)]">
-        <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-3 px-4 py-3">
-          <div className="flex items-center gap-3">
-            <img src="/cipher/icon.svg" alt="" className="h-9 w-9" />
-            <div>
-              <h1 className="text-xl font-semibold leading-tight">Cipher</h1>
-              <p className="text-xs text-[color:var(--muted)]">No server-held state</p>
-            </div>
-          </div>
-          <nav className="ml-auto flex flex-wrap items-center gap-2 text-sm">
-            <a className="icon-link" href={buildInfo.repositoryUrl}>
-              <Github size={16} /> Star repo
-            </a>
-            <a className="icon-link" href={buildInfo.paypalUrl}>
-              <Heart size={16} /> Support
-            </a>
-            <span className="version-pill">
-              v{buildInfo.version} · {buildInfo.commit}
-            </span>
-          </nav>
+    <div className="flex h-screen flex-col overflow-hidden bg-[color:var(--page)] text-[color:var(--ink)]">
+      {/* ── Toast ─────────────────────────────────────── */}
+      {notice && (
+        <div
+          className={`notice notice-${notice.tone} fixed right-4 top-4 z-50 flex max-w-xs items-start gap-2 shadow-xl`}
+        >
+          <span className="flex-1 text-sm">{notice.text}</span>
+          <button
+            className="shrink-0 opacity-60 hover:opacity-100"
+            onClick={() => setNotice(undefined)}
+          >
+            <X size={14} />
+          </button>
         </div>
-      </header>
+      )}
 
-      <div className="mx-auto grid max-w-7xl gap-4 px-4 py-4 lg:grid-cols-[280px_minmax(0,1fr)_340px]">
-        <aside className="space-y-4">
-          <Panel title="Identity" icon={<KeyRound size={17} />}>
-            <label className="field-label" htmlFor="displayName">
-              Display name
-            </label>
-            <input
-              id="displayName"
-              className="input"
-              value={identity?.displayName ?? ""}
-              onChange={(event) => void handleRename(event.target.value)}
+      {/* ── Camera overlay ───────────────────────────── */}
+      {scanner.scanning && (
+        <div className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-6 bg-black">
+          <p className="text-lg font-semibold text-white">Scan QR code</p>
+          <video
+            ref={scanner.videoRef}
+            autoPlay
+            muted
+            playsInline
+            className="w-full max-w-xs rounded-2xl"
+            style={{ maxHeight: "60vh", objectFit: "cover" }}
+          />
+          {scanner.error && <p className="text-sm text-red-400">⚠ {scanner.error}</p>}
+          <button className="button" onClick={scanner.stop}>
+            <CameraOff size={16} /> Cancel
+          </button>
+        </div>
+      )}
+
+      {/* ── Invite-from-URL modal ─────────────────────── */}
+      {inviteFromUrl && !awaitingWelcome && (
+        <Backdrop onClose={() => setInviteFromUrl(undefined)}>
+          <Sheet>
+            <SheetHeader
+              title="You've been invited"
+              onClose={() => setInviteFromUrl(undefined)}
             />
-            <p className="mt-2 break-all text-xs text-[color:var(--muted)]">
-              {identity?.boxPublicKey.slice(0, 52)}…
+            <p className="text-sm text-[color:var(--muted)]">
+              <strong className="text-[color:var(--ink)]">
+                {inviteFromUrl.host.displayName}
+              </strong>{" "}
+              invited you to join{" "}
+              <strong className="text-[color:var(--ink)]">
+                {inviteFromUrl.groupName}
+              </strong>
+              .
             </p>
-          </Panel>
+            <button
+              className="button w-full"
+              disabled={busy}
+              onClick={() => void handleCreateJoinRequest()}
+            >
+              <KeyRound size={15} /> Send join request
+            </button>
+          </Sheet>
+        </Backdrop>
+      )}
 
-          <Panel title="Rooms" icon={<Users size={17} />}>
-            <div className="space-y-2">
-              {groups.map((group) => (
+      {/* ── Share modal ───────────────────────────────── */}
+      {modal === "share" && selectedGroup && (
+        <Backdrop onClose={() => setModal(null)}>
+          <Sheet>
+            <SheetHeader
+              title={`Add people · ${selectedGroup.name}`}
+              onClose={() => setModal(null)}
+            />
+
+            {/* Tab bar */}
+            <div className="grid grid-cols-2 gap-1 rounded-xl bg-white/5 p-1">
+              {(["open-link", "invite"] as ShareTab[]).map((t) => (
                 <button
-                  className={`room-button ${
-                    group.id === selectedGroupId ? "room-button-active" : ""
+                  key={t}
+                  className={`rounded-lg py-2 text-sm transition-colors ${
+                    shareTab === t ? "bg-white/10 font-semibold" : "opacity-50"
                   }`}
-                  key={group.id}
-                  onClick={() => setSelectedGroupId(group.id)}
-                  type="button"
+                  onClick={() => {
+                    setShareTab(t);
+                    if (t === "open-link" && !roomLink) void handleShareRoom();
+                    if (t === "invite" && !inviteLink) void handleCreateInvite();
+                  }}
                 >
-                  <span>{group.name}</span>
-                  <small>{group.participants.length}</small>
+                  {t === "open-link" ? "Open link" : "Invite"}
                 </button>
               ))}
             </div>
-            <div className="mt-3 flex gap-2">
+
+            {shareTab === "open-link" && (
+              <div className="space-y-3">
+                <p className="text-xs text-[color:var(--muted)]">
+                  Anyone who has this link joins instantly. Treat it like a key — only
+                  share with people you already trust.
+                </p>
+                {roomLinkQr ? (
+                  <img alt="Room QR" className="qr mx-auto" src={roomLinkQr} />
+                ) : (
+                  <p className="py-6 text-center text-sm text-[color:var(--muted)]">
+                    Generating…
+                  </p>
+                )}
+                {roomLink && (
+                  <button
+                    className="button w-full"
+                    onClick={() => void navigator.clipboard.writeText(roomLink)}
+                  >
+                    <Copy size={15} /> Copy link
+                  </button>
+                )}
+              </div>
+            )}
+
+            {shareTab === "invite" && (
+              <div className="space-y-3">
+                {joinRequest ? (
+                  <>
+                    <p className="text-sm">
+                      <strong>{joinRequest.requester.displayName}</strong> wants to
+                      join.
+                    </p>
+                    <button
+                      className="button w-full"
+                      disabled={busy}
+                      onClick={() => void handleApproveJoin()}
+                    >
+                      <Check size={15} /> Approve
+                    </button>
+                  </>
+                ) : awaitingWelcome ? (
+                  <p className="py-4 text-center text-sm text-[color:var(--muted)]">
+                    Join request sent — waiting for host to approve…
+                  </p>
+                ) : (
+                  <>
+                    <p className="text-xs text-[color:var(--muted)]">
+                      Show this QR to the person you want to add. They scan it and send
+                      a request; you approve and they&apos;re in.
+                    </p>
+                    {inviteQr ? (
+                      <img alt="Invite QR" className="qr mx-auto" src={inviteQr} />
+                    ) : (
+                      <p className="py-6 text-center text-sm text-[color:var(--muted)]">
+                        Generating…
+                      </p>
+                    )}
+                    {inviteLink && (
+                      <details className="text-xs">
+                        <summary className="cursor-pointer text-[color:var(--muted)]">
+                          Copy invite link instead
+                        </summary>
+                        <div className="mt-2 flex gap-2">
+                          <textarea
+                            className="textarea text-xs"
+                            readOnly
+                            value={inviteLink}
+                          />
+                        </div>
+                        <button
+                          className="button mt-2 w-full text-xs"
+                          onClick={() => void navigator.clipboard.writeText(inviteLink)}
+                        >
+                          <Copy size={13} /> Copy
+                        </button>
+                      </details>
+                    )}
+                    <div className="border-t border-white/10 pt-3">
+                      <p className="mb-2 text-xs text-[color:var(--muted)]">
+                        Joining via a link someone shared with you?
+                      </p>
+                      <button
+                        className="button w-full"
+                        onClick={() => {
+                          setModal(null);
+                          void scanner.start();
+                        }}
+                      >
+                        <Camera size={15} /> Scan their QR
+                      </button>
+                    </div>
+                    {/* Manual capsule fallback */}
+                    <details className="text-xs">
+                      <summary className="cursor-pointer text-[color:var(--muted)]">
+                        Manual capsule exchange (advanced)
+                      </summary>
+                      <textarea
+                        className="textarea mt-2 text-xs"
+                        onChange={(e) => setCapsuleInput(e.target.value)}
+                        placeholder="Paste join request or welcome capsule"
+                        value={capsuleInput}
+                      />
+                      <button
+                        className="button mt-2 w-full text-xs"
+                        disabled={busy || !capsuleInput.trim()}
+                        onClick={() => void handleImportCapsule()}
+                      >
+                        <KeyRound size={13} /> Open capsule
+                      </button>
+                      {capsuleOutput && (
+                        <button
+                          className="button mt-2 w-full text-xs"
+                          onClick={() =>
+                            void navigator.clipboard.writeText(capsuleOutput)
+                          }
+                        >
+                          <Copy size={13} /> Copy capsule
+                        </button>
+                      )}
+                    </details>
+                  </>
+                )}
+              </div>
+            )}
+
+            <button className="button w-full" onClick={() => setModal(null)}>
+              Done
+            </button>
+          </Sheet>
+        </Backdrop>
+      )}
+
+      {/* ── Settings modal ────────────────────────────── */}
+      {modal === "settings" && (
+        <Backdrop onClose={() => setModal(null)}>
+          <Sheet className="max-h-[85vh] overflow-y-auto">
+            <SheetHeader title="Settings" onClose={() => setModal(null)} />
+
+            {/* Identity */}
+            <div>
+              <label className="field-label" htmlFor="displayName">
+                Display name
+              </label>
               <input
-                aria-label="Group name"
-                className="input min-w-0 flex-1"
-                value={newGroupName}
-                onChange={(event) => setNewGroupName(event.target.value)}
+                id="displayName"
+                className="input"
+                value={identity?.displayName ?? ""}
+                onChange={(e) => void handleRename(e.target.value)}
+              />
+              <p className="mt-1 break-all text-xs text-[color:var(--muted)]">
+                {identity?.boxPublicKey.slice(0, 52)}…
+              </p>
+            </div>
+
+            {/* Security */}
+            <div className="border-t border-white/10 pt-4">
+              <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-[color:var(--muted)]">
+                Security
+              </p>
+              <StatusRow
+                label="MLS engine"
+                value={mlsOk === undefined ? "not checked" : mlsOk ? "ready" : "failed"}
+              />
+              <StatusRow label="Peers" value={String(meshStatus.connectedPeers)} />
+              <StatusRow
+                label="Local tabs"
+                value={meshStatus.localTabs ? "on" : "off"}
               />
               <button
-                aria-label="Create room"
-                className="icon-button"
+                className="button mt-2 w-full"
                 disabled={busy}
-                onClick={() => void handleCreateGroup()}
-                type="button"
+                onClick={() => void handleMlsCheck()}
               >
-                <Plus size={18} />
+                <ShieldCheck size={15} /> Check MLS
               </button>
             </div>
-          </Panel>
 
-          <Panel title="Security" icon={<ShieldCheck size={17} />}>
-            <StatusRow
-              label="MLS engine"
-              value={mlsOk === undefined ? "not checked" : mlsOk ? "ready" : "failed"}
-            />
-            <StatusRow label="Peers" value={String(meshStatus.connectedPeers)} />
-            <StatusRow label="Local tabs" value={meshStatus.localTabs ? "on" : "off"} />
+            {/* Local AI */}
+            <div className="border-t border-white/10 pt-4">
+              <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-[color:var(--muted)]">
+                Local AI
+              </p>
+              <button
+                className="button w-full"
+                disabled={busy}
+                onClick={() => void handleSummarize()}
+              >
+                <Bot size={15} /> Summarize thread
+              </button>
+              <label className="button mt-2 w-full cursor-pointer" htmlFor="audio">
+                <Mic size={15} /> Whisper audio
+              </label>
+              <input
+                accept="audio/*"
+                className="sr-only"
+                id="audio"
+                onChange={(e) => void handleAudio(e.target.files?.[0])}
+                type="file"
+              />
+              {aiResult && (
+                <div className="ai-result">
+                  <small>{aiResult.engine}</small>
+                  <p>{aiResult.summary}</p>
+                </div>
+              )}
+              {transcript && doc && selectedGroup && identity && (
+                <button
+                  className="button mt-2 w-full"
+                  onClick={() => void handleSendTranscript()}
+                >
+                  <Send size={15} /> Send transcript
+                </button>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="flex items-center gap-3 border-t border-white/10 pt-4 text-xs text-[color:var(--muted)]">
+              <a className="icon-link" href={buildInfo.repositoryUrl}>
+                <Github size={13} /> GitHub
+              </a>
+              <a className="icon-link" href={buildInfo.paypalUrl}>
+                <Heart size={13} /> Support
+              </a>
+              <span className="ml-auto">
+                v{buildInfo.version} · {buildInfo.commit}
+              </span>
+            </div>
+
+            <button className="button w-full" onClick={() => setModal(null)}>
+              Done
+            </button>
+          </Sheet>
+        </Backdrop>
+      )}
+
+      {/* ── Main layout ───────────────────────────────── */}
+      <div className="flex min-h-0 flex-1">
+        {/* Left sidebar */}
+        <aside className="flex w-[220px] shrink-0 flex-col border-r border-white/10">
+          {/* App bar */}
+          <div className="flex items-center gap-2 border-b border-white/10 px-3 py-3">
+            <img alt="" className="h-7 w-7" src="/cipher/icon.svg" />
+            <span className="flex-1 text-sm font-semibold">Cipher</span>
             <button
-              className="button mt-2 w-full"
+              className="p-1 opacity-50 hover:opacity-100"
+              onClick={() => void scanner.start()}
+              title="Scan QR"
+            >
+              <Camera size={16} />
+            </button>
+            <button
+              className="p-1 opacity-50 hover:opacity-100"
+              onClick={() => setModal("settings")}
+              title="Settings"
+            >
+              <Settings size={16} />
+            </button>
+          </div>
+
+          {/* Room list */}
+          <div className="flex-1 overflow-y-auto py-2 px-2 space-y-1">
+            {groups.map((group) => (
+              <button
+                className={`room-button ${group.id === selectedGroupId ? "room-button-active" : ""}`}
+                key={group.id}
+                onClick={() => setSelectedGroupId(group.id)}
+                type="button"
+              >
+                <span className="flex-1 truncate text-left text-sm">{group.name}</span>
+                <small className="shrink-0">{group.participants.length}</small>
+              </button>
+            ))}
+          </div>
+
+          {/* New room */}
+          <div className="flex gap-1 border-t border-white/10 p-2">
+            <input
+              aria-label="Group name"
+              className="input min-w-0 flex-1 text-sm"
+              onChange={(e) => setNewGroupName(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && void handleCreateGroup()}
+              placeholder="New room…"
+              value={newGroupName}
+            />
+            <button
+              aria-label="Create room"
+              className="icon-button shrink-0"
               disabled={busy}
-              onClick={() => void handleMlsCheck()}
+              onClick={() => void handleCreateGroup()}
               type="button"
             >
-              <ShieldCheck size={16} /> Check MLS
+              <Plus size={16} />
             </button>
-          </Panel>
+          </div>
         </aside>
 
-        <section className="min-h-[70vh] rounded-lg border border-white/10 bg-[color:var(--surface)]">
+        {/* Chat area */}
+        <main className="flex min-w-0 flex-1 flex-col">
           {selectedGroup ? (
-            <div className="flex h-full min-h-[70vh] flex-col">
-              <div className="flex flex-wrap items-center gap-3 border-b border-white/10 px-4 py-3">
-                <div>
-                  <h2 className="text-lg font-semibold">{selectedGroup.name}</h2>
+            <>
+              {/* Room header */}
+              <header className="flex shrink-0 items-center gap-3 border-b border-white/10 px-5 py-3">
+                <div className="min-w-0 flex-1">
+                  <h2 className="truncate font-semibold">{selectedGroup.name}</h2>
                   <p className="text-xs text-[color:var(--muted)]">
-                    {selectedGroup.participants.length} participants · Yjs encrypted log
+                    {selectedGroup.participants.length} participants
+                    {meshStatus.connectedPeers > 0 &&
+                      ` · ${meshStatus.connectedPeers} online`}
                   </p>
                 </div>
-                <div className="ml-auto flex gap-2">
-                  <div className="flex flex-col items-center gap-0.5">
-                    <button
-                      className="button"
-                      disabled={busy}
-                      onClick={() => void handleShareRoom()}
-                      title="Open link — anyone who has it joins, no questions asked"
-                      type="button"
-                    >
-                      <Share2 size={16} /> Open link
-                    </button>
-                    <span className="text-[10px] text-[color:var(--muted)]">
-                      anyone who has it
-                    </span>
-                  </div>
-                  <div className="flex flex-col items-center gap-0.5">
-                    <button
-                      className="button"
-                      disabled={busy}
-                      onClick={() => void handleCreateInvite()}
-                      title="Invite a specific person — you pick who gets in"
-                      type="button"
-                    >
-                      <Users size={16} /> Invite
-                    </button>
-                    <span className="text-[10px] text-[color:var(--muted)]">
-                      you pick who joins
-                    </span>
-                  </div>
-                </div>
-              </div>
+                <button
+                  className="button"
+                  disabled={busy}
+                  onClick={() => void openShare("open-link")}
+                >
+                  <Share2 size={15} /> Share
+                </button>
+              </header>
 
-              <div className="message-list">
+              {/* Join request banner */}
+              {joinRequest && (
+                <div className="mx-4 mt-3 flex shrink-0 items-center gap-3 rounded-xl border border-amber-500/20 bg-amber-500/10 px-4 py-3">
+                  <p className="flex-1 text-sm">
+                    <strong>{joinRequest.requester.displayName}</strong> wants to join
+                  </p>
+                  <button
+                    className="button"
+                    disabled={busy}
+                    onClick={() => void handleApproveJoin()}
+                  >
+                    <Check size={14} /> Approve
+                  </button>
+                </div>
+              )}
+
+              {/* Awaiting welcome banner */}
+              {awaitingWelcome && (
+                <div className="mx-4 mt-3 shrink-0 rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-[color:var(--muted)]">
+                  Join request sent — waiting for host to approve…
+                </div>
+              )}
+
+              {/* Messages */}
+              <div className="flex-1 overflow-y-auto px-4 py-4">
                 {messages.length === 0 ? (
-                  <div className="empty-state">
-                    <ShieldCheck size={28} />
-                    <p>Messages are encrypted before they enter the shared Yjs log.</p>
+                  <div className="flex h-full items-center justify-center text-sm text-[color:var(--muted)]">
+                    No messages yet
                   </div>
                 ) : (
-                  messages.map((message) => (
-                    <article
-                      className={`message ${
-                        message.senderId === identity?.id ? "message-own" : ""
-                      }`}
-                      key={message.id}
-                    >
-                      <div className="message-meta">
-                        <span>{message.senderName}</span>
-                        <time>{new Date(message.createdAt).toLocaleTimeString()}</time>
-                        {message.verified ? <Check size={13} /> : null}
-                      </div>
-                      <p>{message.body}</p>
-                    </article>
-                  ))
+                  <div className="space-y-2">
+                    {messages.map((msg) => {
+                      const isOwn = msg.senderId === identity?.id;
+                      return (
+                        <div
+                          key={msg.id}
+                          className={`flex ${isOwn ? "justify-end" : "justify-start"}`}
+                        >
+                          <div
+                            className={`max-w-[72%] rounded-2xl px-4 py-2.5 ${
+                              isOwn
+                                ? "rounded-br-md bg-[color:var(--accent)] text-[#14211b]"
+                                : "rounded-bl-md bg-white/10"
+                            }`}
+                          >
+                            {!isOwn && (
+                              <p className="mb-0.5 text-[11px] font-semibold opacity-60">
+                                {msg.senderName}
+                              </p>
+                            )}
+                            <p className="text-sm leading-relaxed overflow-wrap-anywhere whitespace-pre-wrap">
+                              {msg.body}
+                            </p>
+                            <p
+                              className={`mt-0.5 text-[10px] ${isOwn ? "text-right text-black/40" : "text-[color:var(--muted)]"}`}
+                            >
+                              {new Date(msg.createdAt).toLocaleTimeString([], {
+                                hour: "2-digit",
+                                minute: "2-digit"
+                              })}
+                              {msg.verified && " ✓"}
+                            </p>
+                          </div>
+                        </div>
+                      );
+                    })}
+                    <div ref={messagesEndRef} />
+                  </div>
                 )}
               </div>
 
+              {/* Message input */}
               <form
-                className="flex gap-2 border-t border-white/10 p-3"
-                onSubmit={(event) => {
-                  event.preventDefault();
+                className="flex shrink-0 gap-2 border-t border-white/10 p-3"
+                onSubmit={(e) => {
+                  e.preventDefault();
                   void handleSend();
                 }}
               >
                 <input
-                  className="input"
+                  className="input flex-1"
                   disabled={busy}
-                  onChange={(event) => setDraft(event.target.value)}
+                  onChange={(e) => setDraft(e.target.value)}
                   placeholder="Write an encrypted message"
                   value={draft}
                 />
                 <button
-                  className="button"
+                  className="icon-button shrink-0"
                   disabled={busy || !draft.trim()}
                   type="submit"
                 >
-                  <Send size={16} /> Send
+                  <Send size={16} />
                 </button>
               </form>
-            </div>
+            </>
           ) : (
-            <div className="grid min-h-[70vh] place-items-center p-8 text-center">
-              <div className="max-w-sm">
-                <h2 className="text-2xl font-semibold">Create or join a room</h2>
-                <p className="mt-2 text-[color:var(--muted)]">
-                  Create a room, then click <strong>Open link</strong> to share with
-                  anyone, or <strong>Invite</strong> to pick someone specific.
+            <div className="flex flex-1 flex-col items-center justify-center gap-4 p-8 text-center">
+              <img alt="" className="h-16 w-16 opacity-20" src="/cipher/icon.svg" />
+              <div>
+                <h2 className="text-lg font-semibold">No room selected</h2>
+                <p className="mt-1 text-sm text-[color:var(--muted)]">
+                  Pick a room on the left, or create one.
                 </p>
-                <button
-                  className="button mx-auto mt-4"
-                  disabled={busy}
-                  onClick={() => void handleCreateGroup()}
-                  type="button"
-                >
-                  <Plus size={16} /> New group
-                </button>
               </div>
+              <button
+                className="button"
+                disabled={busy}
+                onClick={() => void handleCreateGroup()}
+              >
+                <Plus size={15} /> New room
+              </button>
             </div>
           )}
-        </section>
-
-        <aside className="space-y-4">
-          {notice ? <NoticeBox notice={notice} /> : null}
-
-          {roomLink ? (
-            <Panel title="Open Link" icon={<Share2 size={17} />}>
-              <p className="text-xs text-[color:var(--muted)]">
-                Anyone who has this joins instantly — no questions asked. Treat it like
-                a key: only share with people you already trust.
-              </p>
-              {roomLinkQr ? (
-                <img
-                  alt="Room QR code — scan to join instantly"
-                  className="qr mx-auto mt-2"
-                  src={roomLinkQr}
-                />
-              ) : null}
-              <CopyBox value={roomLink} />
-            </Panel>
-          ) : null}
-
-          {inviteFromUrl ? (
-            <Panel title="Join Invite" icon={<KeyRound size={17} />}>
-              <p className="text-sm text-[color:var(--muted)]">
-                {inviteFromUrl.host.displayName} invited you to{" "}
-                {inviteFromUrl.groupName}.
-              </p>
-              {awaitingWelcome ? (
-                <p className="mt-3 text-sm text-[color:var(--muted)]">
-                  Join request sent — waiting for host to approve…
-                  <br />
-                  <span className="text-xs opacity-70">
-                    (Copy the capsule below if you need to send it manually.)
-                  </span>
-                </p>
-              ) : (
-                <button
-                  className="button mt-3 w-full"
-                  disabled={busy}
-                  onClick={() => void handleCreateJoinRequest()}
-                  type="button"
-                >
-                  <KeyRound size={16} /> Create join request
-                </button>
-              )}
-            </Panel>
-          ) : null}
-
-          <Panel title="Invite Someone" icon={<Users size={17} />}>
-            {/* ---- Inviter side: show invite QR ---- */}
-            {inviteLink ? (
-              <div className="space-y-2">
-                {inviteQr ? (
-                  <>
-                    <p className="text-xs text-[color:var(--muted)]">
-                      Show this QR to the person you want to add. They send a join
-                      request; you approve before they get the key.
-                    </p>
-                    <img
-                      alt="Secure invite QR code — show to joiner"
-                      className="qr mx-auto"
-                      src={inviteQr}
-                    />
-                  </>
-                ) : null}
-                <details className="mt-1">
-                  <summary className="cursor-pointer text-xs text-[color:var(--muted)]">
-                    copy invite link
-                  </summary>
-                  <textarea className="textarea mt-1" readOnly value={inviteLink} />
-                </details>
-              </div>
-            ) : null}
-
-            {/* ---- Joiner side: camera scanner ---- */}
-            <div className="mt-3">
-              <p className="mb-2 text-xs text-[color:var(--muted)]">
-                Scan a room QR shown by the host — works for both invite and room-link
-                QRs.
-              </p>
-              <button
-                className="button w-full"
-                onClick={() => {
-                  if (scanner.scanning) {
-                    scanner.stop();
-                  } else {
-                    void scanner.start();
-                  }
-                }}
-                type="button"
-              >
-                {scanner.scanning ? (
-                  <>
-                    <CameraOff size={16} /> Stop scanner
-                  </>
-                ) : (
-                  <>
-                    <Camera size={16} /> Scan QR
-                  </>
-                )}
-              </button>
-              {scanner.scanning && (
-                <video
-                  ref={scanner.videoRef}
-                  muted
-                  playsInline
-                  autoPlay
-                  className="mt-2 w-full rounded-lg"
-                  style={{ maxHeight: "200px", objectFit: "cover" }}
-                />
-              )}
-              {scanner.error ? (
-                <p className="mt-1 text-xs text-red-400">⚠ {scanner.error}</p>
-              ) : null}
-            </div>
-
-            {/* ---- Manual fallback ---- */}
-            <details className="mt-3">
-              <summary className="cursor-pointer text-xs text-[color:var(--muted)]">
-                manual capsule exchange (fallback)
-              </summary>
-              <textarea
-                className="textarea mt-2"
-                onChange={(event) => setCapsuleInput(event.target.value)}
-                placeholder="Paste join request or welcome capsule"
-                value={capsuleInput}
-              />
-              <div className="mt-2 flex gap-2">
-                <button
-                  className="button flex-1"
-                  disabled={busy || !capsuleInput.trim()}
-                  onClick={() => void handleImportCapsule()}
-                  type="button"
-                >
-                  <KeyRound size={16} /> Open
-                </button>
-              </div>
-            </details>
-
-            {joinRequest ? (
-              <button
-                className="button mt-3 w-full"
-                disabled={busy}
-                onClick={() => void handleApproveJoin()}
-                type="button"
-              >
-                <Check size={16} /> Approve join request from{" "}
-                {joinRequest.requester.displayName}
-              </button>
-            ) : null}
-            {capsuleOutput ? <CopyBox value={capsuleOutput} /> : null}
-          </Panel>
-
-          <Panel title="Local AI" icon={<Bot size={17} />}>
-            <button
-              className="button w-full"
-              disabled={busy}
-              onClick={() => void handleSummarize()}
-              type="button"
-            >
-              <Bot size={16} /> Summarize thread
-            </button>
-            <label className="button mt-2 w-full cursor-pointer" htmlFor="audio">
-              <Mic size={16} /> Whisper audio
-            </label>
-            <input
-              accept="audio/*"
-              className="sr-only"
-              id="audio"
-              onChange={(event) => void handleAudio(event.target.files?.[0])}
-              type="file"
-            />
-            {aiResult ? (
-              <div className="ai-result">
-                <small>{aiResult.engine}</small>
-                <p>{aiResult.summary}</p>
-              </div>
-            ) : null}
-            {transcript && doc && selectedGroup && identity ? (
-              <button
-                className="button mt-2 w-full"
-                onClick={() => void handleSendTranscript()}
-                type="button"
-              >
-                <Send size={16} /> Send transcript
-              </button>
-            ) : null}
-          </Panel>
-        </aside>
+        </main>
       </div>
-    </main>
+    </div>
   );
 }
 
-function Panel({
-  title,
-  icon,
-  children
+// ── Small layout helpers ──────────────────────────────────────────────────────
+
+function Backdrop({ children, onClose }: { children: ReactNode; onClose: () => void }) {
+  return (
+    <div
+      className="fixed inset-0 z-40 flex items-end justify-center bg-black/60 p-4 sm:items-center"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+function Sheet({
+  children,
+  className = ""
 }: {
-  title: string;
-  icon: ReactNode;
   children: ReactNode;
+  className?: string;
 }) {
   return (
-    <section className="rounded-lg border border-white/10 bg-[color:var(--surface)] p-3">
-      <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-[color:var(--muted)]">
-        {icon}
-        {title}
-      </h2>
+    <div
+      className={`w-full max-w-sm space-y-4 rounded-2xl bg-[color:var(--panel)] p-5 ${className}`}
+    >
       {children}
-    </section>
+    </div>
+  );
+}
+
+function SheetHeader({ title, onClose }: { title: string; onClose: () => void }) {
+  return (
+    <div className="flex items-center justify-between">
+      <h2 className="font-semibold">{title}</h2>
+      <button className="opacity-50 hover:opacity-100" onClick={onClose}>
+        <X size={18} />
+      </button>
+    </div>
   );
 }
 
@@ -1016,25 +1125,6 @@ function StatusRow({ label, value }: { label: string; value: string }) {
       <strong className="text-sm">{value}</strong>
     </div>
   );
-}
-
-function CopyBox({ value }: { value: string }) {
-  return (
-    <div className="mt-2">
-      <textarea className="textarea" readOnly value={value} />
-      <button
-        className="button mt-2 w-full"
-        onClick={() => void navigator.clipboard.writeText(value)}
-        type="button"
-      >
-        <Copy size={16} /> Copy
-      </button>
-    </div>
-  );
-}
-
-function NoticeBox({ notice }: { notice: Notice }) {
-  return <div className={`notice notice-${notice.tone}`}>{notice.text}</div>;
 }
 
 function errorMessage(error: unknown): string {
