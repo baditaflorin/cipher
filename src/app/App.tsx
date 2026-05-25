@@ -245,16 +245,19 @@ export function App() {
           yState: chat.encodeDocState(nextDoc)
         };
         void (async () => {
-          const allDecrypted = await chat.decryptMessages(
+          // Check for a valid owner-signed delete command.
+          // If found, delete any straggler messages still in the array
+          // (handles out-of-order CRDT delivery). deleteMessagesBefore is
+          // idempotent — no-op when the array is already empty.
+          const clearTs = await chat.getVerifiedClearTimestamp(nextDoc, mergedGroup);
+          if (clearTs) chat.deleteMessagesBefore(nextDoc, clearTs);
+
+          // Decrypt whatever remains in the array after the delete.
+          const decrypted = await chat.decryptMessages(
             mergedGroup,
             chat.getEncryptedMessages(nextDoc)
           );
-          // Apply signed clear command — only owner's verified signature is honoured
-          const clearTs = await chat.getVerifiedClearTimestamp(nextDoc, mergedGroup);
-          const visible = clearTs
-            ? allDecrypted.filter((m) => m.createdAt > clearTs)
-            : allDecrypted;
-          setMessages(visible);
+          setMessages(decrypted);
         })();
         void storage.saveGroup(mergedGroup);
         setGroups((items) =>
@@ -572,7 +575,7 @@ export function App() {
     }
     if (
       !confirm(
-        "Clear all messages?\n\nThis hides the entire history for everyone in the room — including people who join later. Only you (as the owner) can do this."
+        "Delete all messages?\n\nThis permanently removes them from the room for every connected peer and from future snapshots — people who join later will not see them either. This cannot be undone."
       )
     )
       return;
@@ -580,7 +583,7 @@ export function App() {
     try {
       const { postClearCommand } = await import("../features/chat/groups");
       await postClearCommand(doc, selectedGroup, identity);
-      setNotice({ tone: "good", text: "Message history cleared for everyone." });
+      setNotice({ tone: "good", text: "Messages deleted for all peers." });
     } catch (error) {
       setNotice({ tone: "bad", text: errorMessage(error) });
     } finally {
@@ -1082,9 +1085,9 @@ export function App() {
                               }}
                               type="button"
                             >
-                              Clear message history
+                              Delete message history
                               <p className="mt-0.5 text-xs text-[color:var(--muted)]">
-                                Hides all messages for everyone
+                                Permanently removes messages for all peers
                               </p>
                             </button>
                             <div className="border-t border-white/10" />

@@ -186,15 +186,18 @@ export function readParticipantsFromDoc(doc: Y.Doc): Participant[] {
 }
 
 /**
- * Post a signed "clear history" command to the shared Yjs doc.
+ * Post a signed "delete history" command to the shared Yjs doc, then
+ * immediately delete all matching messages from the Y.Array.
  *
- * Only the room owner can produce a valid command: the signature covers
- * `${groupId}.clear.${timestamp}` and is verified by every peer against
- * the owner's public signing key before the clear is applied.  A non-owner
- * — even one who edits the client JS — cannot forge a valid signature.
+ * The Y.Array.delete() is a real CRDT operation: it propagates to every
+ * connected peer via y-webrtc and is baked into the yState snapshot, so
+ * future joiners also receive a doc that no longer contains the deleted
+ * messages.  The signed command in the `clears` map is the authorisation
+ * record — peers that receive the update verify it and delete any
+ * stragglers that arrived out-of-order after the clear.
  *
- * The messages Y.Array is left untouched (append-only). Peers filter out
- * messages with createdAt ≤ clearTimestamp at render time.
+ * Only the room owner can produce a valid signature, so non-owners cannot
+ * trigger a delete even if they bypass the UI.
  */
 export async function postClearCommand(
   doc: Y.Doc,
@@ -202,21 +205,43 @@ export async function postClearCommand(
   identity: IdentityRecord
 ): Promise<void> {
   if (identity.id !== group.ownerId) {
-    throw new Error("Only the room owner can clear history.");
+    throw new Error("Only the room owner can delete history.");
   }
   const timestamp = new Date().toISOString();
   const payload = `${group.id}.clear.${timestamp}`;
   const signature = await signDetached(identity.signSecretKey, payload);
   const cmd: ClearCommand = { timestamp, ownerId: identity.id, signature };
   doc.getMap<string>(clearsKey).set("v1", JSON.stringify(cmd));
+  // Actually remove the message content from the CRDT array.
+  deleteMessagesBefore(doc, timestamp);
 }
 
 /**
- * Read and cryptographically verify the latest clear command from the doc.
+ * Delete all messages with createdAt ≤ cutoff from the shared Y.Array.
+ * Safe to call multiple times — a no-op when the array is already empty.
+ * Wrapped in a single Yjs transaction so peers receive one atomic update.
+ */
+export function deleteMessagesBefore(doc: Y.Doc, cutoff: string): void {
+  const arr = doc.getArray<EncryptedChatRecord>(messagesKey);
+  // Collect indices in reverse so earlier deletions don't shift later ones.
+  const toDelete: number[] = [];
+  arr.forEach((msg, i) => {
+    if (msg.createdAt <= cutoff) toDelete.push(i);
+  });
+  if (toDelete.length === 0) return;
+  doc.transact(() => {
+    for (let i = toDelete.length - 1; i >= 0; i--) {
+      arr.delete(toDelete[i], 1);
+    }
+  });
+}
+
+/**
+ * Read and cryptographically verify the latest delete command from the doc.
  *
- * Returns the timestamp if the command signature is valid (signed by the
- * actual room owner), or null if there is no command or the signature does
- * not verify.  Messages with createdAt ≤ this timestamp should be hidden.
+ * Returns the cutoff timestamp if the signature is valid (signed by the
+ * actual room owner), or null otherwise.  Used by peers to delete any
+ * out-of-order straggler messages that arrived after the owner's clear.
  */
 export async function getVerifiedClearTimestamp(
   doc: Y.Doc,
