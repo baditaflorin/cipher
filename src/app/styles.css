@@ -117,7 +117,7 @@ a {
   cursor: pointer;
   display: flex;
   justify-content: space-between;
-  min-height: 40px;
+  min-height: 48px; /* 44 px+ tap target on mobile */
   padding: 0.4rem 0.55rem;
   text-align: left;
   transition: background 120ms ease;

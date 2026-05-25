@@ -1,4 +1,5 @@
 import {
+  ArrowLeft,
   Bot,
   Camera,
   CameraOff,
@@ -644,7 +645,10 @@ export function App() {
     <div className="flex h-full flex-col overflow-hidden bg-[color:var(--page)] text-[color:var(--ink)]">
       {/* ── Onboarding (first launch only) ───────────── */}
       {showOnboarding && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-[color:var(--page)] p-6">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-[color:var(--page)] p-6"
+          data-testid="onboarding"
+        >
           <div className="flex w-full max-w-sm flex-col gap-5">
             {/* Brand */}
             <div className="flex flex-col items-center gap-3 text-center">
@@ -1095,25 +1099,33 @@ export function App() {
 
       {/* ── Main layout ───────────────────────────────── */}
       <div className="flex min-h-0 flex-1">
-        {/* Left sidebar */}
-        <aside className="flex w-[220px] shrink-0 flex-col border-r border-white/10">
+        {/* Sidebar
+            Mobile  : full-width when no room selected, hidden when chatting
+            Desktop : always visible at 220 px */}
+        <aside
+          className={`flex-col border-r border-white/10 ${
+            selectedGroupId
+              ? "hidden md:flex md:w-[220px] md:shrink-0"
+              : "flex w-full md:w-[220px] md:shrink-0"
+          }`}
+        >
           {/* App bar */}
           <div className="flex items-center gap-2 border-b border-white/10 px-3 py-3">
             <img alt="" className="h-7 w-7" src="/cipher/icon.svg" />
             <span className="flex-1 text-sm font-semibold">Cipher</span>
             <button
-              className="p-1 opacity-50 hover:opacity-100"
+              className="flex h-10 w-10 items-center justify-center rounded-lg opacity-50 hover:opacity-100 md:h-auto md:w-auto md:p-1"
               onClick={() => void scanner.start()}
               title="Scan QR"
             >
-              <Camera size={16} />
+              <Camera size={18} />
             </button>
             <button
-              className="p-1 opacity-50 hover:opacity-100"
+              className="flex h-10 w-10 items-center justify-center rounded-lg opacity-50 hover:opacity-100 md:h-auto md:w-auto md:p-1"
               onClick={() => setModal("settings")}
               title="Settings"
             >
-              <Settings size={16} />
+              <Settings size={18} />
             </button>
           </div>
 
@@ -1185,12 +1197,27 @@ export function App() {
           </div>
         </aside>
 
-        {/* Chat area */}
-        <main className="flex min-w-0 flex-1 flex-col">
+        {/* Chat area
+            Mobile  : full-width when room selected, hidden when browsing list
+            Desktop : always visible, takes remaining space */}
+        <main
+          className={`min-w-0 flex-col ${
+            selectedGroupId ? "flex flex-1" : "hidden md:flex md:flex-1"
+          }`}
+        >
           {selectedGroup ? (
             <>
               {/* Room header */}
-              <header className="flex shrink-0 items-center gap-3 border-b border-white/10 px-5 py-3">
+              <header className="flex shrink-0 items-center gap-2 border-b border-white/10 px-3 py-3 md:gap-3 md:px-5">
+                {/* Back to room list — mobile only */}
+                <button
+                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg opacity-60 hover:opacity-100 md:hidden"
+                  onClick={() => setSelectedGroupId(undefined)}
+                  title="Back to rooms"
+                  type="button"
+                >
+                  <ArrowLeft size={18} />
+                </button>
                 <div className="min-w-0 flex-1">
                   <h2 className="truncate font-semibold">{selectedGroup.name}</h2>
                   <div className="flex items-center gap-2">
@@ -1255,11 +1282,12 @@ export function App() {
                   </div>
                 </div>
                 <button
-                  className="flex items-center gap-1.5 rounded-xl border border-[color:var(--accent)]/30 bg-[color:var(--accent)]/10 px-3 py-1.5 text-sm font-semibold text-[color:var(--accent)] transition-colors hover:bg-[color:var(--accent)]/18 disabled:opacity-50"
+                  className="flex items-center gap-1.5 rounded-xl border border-[color:var(--accent)]/30 bg-[color:var(--accent)]/10 px-2.5 py-1.5 text-sm font-semibold text-[color:var(--accent)] transition-colors hover:bg-[color:var(--accent)]/18 disabled:opacity-50 md:px-3"
                   disabled={busy}
                   onClick={() => void openShare("open-link")}
                 >
-                  <Share2 size={14} /> Share
+                  <Share2 size={14} />
+                  <span className="hidden sm:inline">Share</span>
                 </button>
                 {/* Room options menu */}
                 <div className="relative">
@@ -1420,6 +1448,7 @@ export function App() {
                     value={draft}
                   />
                   <button
+                    aria-label="Send"
                     className="icon-button shrink-0"
                     disabled={busy || !draft.trim()}
                     type="submit"

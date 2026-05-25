@@ -7,9 +7,20 @@
  *
  *   npm run test:e2e:mesh
  */
-import { expect, test } from "playwright/test";
+import { expect, test, type Page } from "playwright/test";
 import * as path from "node:path";
 import * as fs from "node:fs";
+
+async function dismissOnboarding(page: Page) {
+  const overlay = page.locator('[data-testid="onboarding"]');
+  try {
+    await overlay.waitFor({ state: "visible", timeout: 8_000 });
+    await page.getByRole("button", { name: "Get started" }).click();
+    await overlay.waitFor({ state: "hidden", timeout: 3_000 });
+  } catch {
+    /* no onboarding */
+  }
+}
 
 test.describe("room-link two-browser join", () => {
   test("both browsers see each other as participants and can exchange messages", async ({
@@ -32,6 +43,7 @@ test.describe("room-link two-browser join", () => {
 
     await pageA.goto("/cipher/");
     await expect(pageA.getByRole("heading", { name: "Cipher" })).toBeVisible();
+    await dismissOnboarding(pageA);
 
     // Create a room.
     await pageA.getByLabel("Group name").fill("Mesh sync test");
