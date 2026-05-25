@@ -111,20 +111,44 @@ a {
 .room-button {
   align-items: center;
   background: transparent;
-  border: 1px solid var(--line);
-  border-radius: 8px;
+  border: none;
+  border-radius: 10px;
   color: var(--ink);
+  cursor: pointer;
   display: flex;
   justify-content: space-between;
-  min-height: 42px;
-  padding: 0.55rem 0.65rem;
+  min-height: 40px;
+  padding: 0.4rem 0.55rem;
   text-align: left;
+  transition: background 120ms ease;
   width: 100%;
+}
+
+.room-button:hover {
+  background: rgb(255 255 255 / 0.06);
 }
 
 .room-button-active {
   background: rgb(125 215 199 / 0.12);
-  border-color: rgb(125 215 199 / 0.5);
+}
+
+/* Thin webkit scrollbar */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgb(255 255 255 / 0.12);
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgb(255 255 255 / 0.22);
 }
 
 .version-pill {

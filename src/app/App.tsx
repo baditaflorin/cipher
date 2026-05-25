@@ -581,14 +581,14 @@ export function App() {
       {/* ── Toast ─────────────────────────────────────── */}
       {notice && (
         <div
-          className={`notice notice-${notice.tone} fixed right-4 top-4 z-50 flex max-w-xs items-start gap-2 shadow-xl`}
+          className={`notice notice-${notice.tone} fixed right-4 top-4 z-50 flex max-w-[280px] items-start gap-2 shadow-2xl backdrop-blur-sm`}
         >
-          <span className="flex-1 text-sm">{notice.text}</span>
+          <span className="flex-1 text-sm leading-snug">{notice.text}</span>
           <button
-            className="shrink-0 opacity-60 hover:opacity-100"
+            className="shrink-0 opacity-50 hover:opacity-100 transition-opacity"
             onClick={() => setNotice(undefined)}
           >
-            <X size={14} />
+            <X size={13} />
           </button>
         </div>
       )}
@@ -945,21 +945,35 @@ export function App() {
           </div>
 
           {/* Room list */}
-          <div className="flex-1 overflow-y-auto py-2 px-2 space-y-1">
-            {groups.map((group) => (
-              <div
-                className={`group/room room-button ${group.id === selectedGroupId ? "room-button-active" : ""}`}
-                key={group.id}
-                onClick={() => setSelectedGroupId(group.id)}
-                role="button"
-                tabIndex={0}
-                onKeyDown={(e) => e.key === "Enter" && setSelectedGroupId(group.id)}
-              >
-                <span className="flex-1 truncate text-left text-sm">{group.name}</span>
-                <div className="flex items-center gap-1 shrink-0">
-                  <small>{group.participants.length}</small>
+          <div className="flex-1 overflow-y-auto py-2 px-2 space-y-0.5">
+            {groups.map((group) => {
+              const color = roomColor(group.name);
+              const initial = group.name.trim()[0]?.toUpperCase() ?? "?";
+              return (
+                <div
+                  className={`group/room room-button ${group.id === selectedGroupId ? "room-button-active" : ""}`}
+                  key={group.id}
+                  onClick={() => setSelectedGroupId(group.id)}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => e.key === "Enter" && setSelectedGroupId(group.id)}
+                >
+                  {/* Colored avatar */}
+                  <div
+                    className="mr-2.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[11px] font-bold"
+                    style={{ background: color, color: "#14211b" }}
+                  >
+                    {initial}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm leading-tight">{group.name}</p>
+                    <p className="text-[10px] text-[color:var(--muted)]">
+                      {group.participants.length}{" "}
+                      {group.participants.length === 1 ? "member" : "members"}
+                    </p>
+                  </div>
                   <button
-                    className="ml-1 hidden group-hover/room:flex items-center justify-center rounded p-0.5 opacity-40 hover:opacity-100 hover:text-red-400"
+                    className="ml-1 hidden group-hover/room:flex shrink-0 items-center justify-center rounded p-0.5 opacity-30 hover:opacity-100 hover:text-red-400"
                     onClick={(e) => {
                       e.stopPropagation();
                       void handleLeaveGroup(group.id);
@@ -969,18 +983,18 @@ export function App() {
                     }
                     type="button"
                   >
-                    <Trash2 size={13} />
+                    <Trash2 size={12} />
                   </button>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
 
           {/* New room */}
-          <div className="flex gap-1 border-t border-white/10 p-2">
+          <div className="flex gap-1.5 border-t border-white/10 p-2">
             <input
               aria-label="Group name"
-              className="input min-w-0 flex-1 text-sm"
+              className="min-w-0 flex-1 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-[color:var(--ink)] outline-none placeholder:text-[color:var(--muted)] focus:border-white/20"
               onChange={(e) => setNewGroupName(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && void handleCreateGroup()}
               placeholder="New room…"
@@ -1013,11 +1027,11 @@ export function App() {
                   </p>
                 </div>
                 <button
-                  className="button"
+                  className="flex items-center gap-1.5 rounded-xl border border-[color:var(--accent)]/30 bg-[color:var(--accent)]/10 px-3 py-1.5 text-sm font-semibold text-[color:var(--accent)] transition-colors hover:bg-[color:var(--accent)]/18 disabled:opacity-50"
                   disabled={busy}
                   onClick={() => void openShare("open-link")}
                 >
-                  <Share2 size={15} /> Share
+                  <Share2 size={14} /> Share
                 </button>
                 {/* Room options menu */}
                 <div className="relative">
@@ -1099,17 +1113,28 @@ export function App() {
               <div className="flex-1 overflow-y-auto px-4 py-4">
                 <div className="mx-auto max-w-2xl">
                   {messages.length === 0 ? (
-                    <div className="flex h-32 items-center justify-center text-sm text-[color:var(--muted)]">
-                      No messages yet
+                    <div className="flex flex-col items-center justify-center gap-2 py-16 text-center">
+                      <p className="text-2xl">🔐</p>
+                      <p className="text-sm font-medium text-[color:var(--muted)]">
+                        No messages yet
+                      </p>
+                      <p className="text-xs text-[color:var(--muted)] opacity-60">
+                        Messages are encrypted on your device before sending.
+                      </p>
                     </div>
                   ) : (
-                    <div className="space-y-2">
-                      {messages.map((msg) => {
+                    <div className="flex flex-col">
+                      {messages.map((msg, index) => {
                         const isOwn = msg.senderId === identity?.id;
+                        const prevMsg = index > 0 ? messages[index - 1] : null;
+                        const isGrouped =
+                          !!prevMsg && prevMsg.senderId === msg.senderId;
                         return (
                           <div
                             key={msg.id}
-                            className={`flex ${isOwn ? "justify-end" : "justify-start"}`}
+                            className={`flex ${isOwn ? "justify-end" : "justify-start"} ${
+                              index === 0 ? "mt-0" : isGrouped ? "mt-0.5" : "mt-3"
+                            }`}
                           >
                             <div
                               className={`max-w-[72%] rounded-2xl px-4 py-2.5 ${
@@ -1118,7 +1143,7 @@ export function App() {
                                   : "rounded-bl-md bg-white/10"
                               }`}
                             >
-                              {!isOwn && (
+                              {!isOwn && !isGrouped && (
                                 <p className="mb-0.5 text-[11px] font-semibold opacity-60">
                                   {msg.senderName}
                                 </p>
@@ -1172,12 +1197,15 @@ export function App() {
               </form>
             </>
           ) : (
-            <div className="flex flex-1 flex-col items-center justify-center gap-4 p-8 text-center">
-              <img alt="" className="h-16 w-16 opacity-20" src="/cipher/icon.svg" />
+            <div className="flex flex-1 flex-col items-center justify-center gap-6 p-8 text-center">
+              <div className="flex h-20 w-20 items-center justify-center rounded-3xl bg-white/5 ring-1 ring-white/8">
+                <img alt="" className="h-10 w-10 opacity-30" src="/cipher/icon.svg" />
+              </div>
               <div>
-                <h2 className="text-lg font-semibold">No room selected</h2>
-                <p className="mt-1 text-sm text-[color:var(--muted)]">
-                  Pick a room on the left, or create one.
+                <h2 className="text-lg font-semibold">Private by default</h2>
+                <p className="mt-1.5 max-w-[260px] text-sm text-[color:var(--muted)] leading-relaxed">
+                  All messages are end-to-end encrypted. Select a room or create a new
+                  one to start chatting.
                 </p>
               </div>
               <button
@@ -1261,4 +1289,25 @@ function InfoRow({
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Something went wrong.";
+}
+
+// ── Room avatar ───────────────────────────────────────────────────────────────
+
+const AVATAR_PALETTE = [
+  "#7dd7c7",
+  "#f2c36b",
+  "#f4877c",
+  "#a78bfa",
+  "#60a5fa",
+  "#34d399",
+  "#fb923c",
+  "#e879f9"
+];
+
+function roomColor(name: string): string {
+  let h = 5381;
+  for (let i = 0; i < name.length; i++) {
+    h = ((h << 5) + h + name.charCodeAt(i)) >>> 0;
+  }
+  return AVATAR_PALETTE[h % AVATAR_PALETTE.length];
 }
