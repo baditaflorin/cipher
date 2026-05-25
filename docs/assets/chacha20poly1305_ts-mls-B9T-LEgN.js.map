@@ -1,1 +1,0 @@
-{"version":3,"file":"chacha20poly1305_ts-mls-B9T-LEgN.js","names":[],"sources":["../../__vite-optional-peer-dep:@hpke/chacha20poly1305:ts-mls"],"sourcesContent":["export default {};\nthrow new Error(`Could not resolve \"@hpke/chacha20poly1305\" imported by \"ts-mls\". Is it installed?`)"],"mappings":"AACA,MAAU,MAAM,oFAAA"}

@@ -1,0 +1,1 @@
+{"version":3,"file":"ml-dsa-B7zyDbZp.js","names":[],"sources":["../../__vite-optional-peer-dep:@noble/post-quantum/ml-dsa.js:ts-mls"],"sourcesContent":["export default {};\nthrow new Error(`Could not resolve \"@noble/post-quantum/ml-dsa.js\" imported by \"ts-mls\". Is it installed?`)"],"mappings":"AACA,MAAU,MAAM,2FAAA"}

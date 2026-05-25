@@ -8,7 +8,6 @@ import {
   Link,
   Mic,
   Plus,
-  RadioTower,
   Send,
   ShieldCheck,
   Users
@@ -44,8 +43,6 @@ export function App() {
   const [draft, setDraft] = useState("");
   const [capsuleInput, setCapsuleInput] = useState("");
   const [capsuleOutput, setCapsuleOutput] = useState("");
-  const [signalInput, setSignalInput] = useState("");
-  const [signalOutput, setSignalOutput] = useState("");
   const [inviteLink, setInviteLink] = useState("");
   const [inviteQr, setInviteQr] = useState("");
   const [joinRequest, setJoinRequest] = useState<JoinRequestPayload>();
@@ -101,11 +98,7 @@ export function App() {
     onHandshakeJoinRequestRef.current = onHandshakeJoinRequest;
   }, [onHandshakeJoinRequest]);
 
-  const meshRef = useRef<{
-    destroy: () => void;
-    createOffer: () => Promise<string>;
-    acceptSignal: (value: string) => Promise<string | undefined>;
-  }>(undefined);
+  const meshRef = useRef<{ destroy: () => void }>(undefined);
   const selectedGroup = useMemo(
     () => groups.find((group) => group.id === selectedGroupId),
     [groups, selectedGroupId]
@@ -133,19 +126,15 @@ export function App() {
     let cancelled = false;
 
     void (async () => {
-      const [Yjs, chat, meshModule, storage] = await Promise.all([
-        import("yjs"),
+      const [chat, meshModule, storage] = await Promise.all([
         import("../features/chat/groups"),
         import("../features/mesh/mesh"),
         import("../features/storage/db")
       ]);
       const nextDoc = chat.createDocFromGroup(selectedGroup);
-      const mesh = new meshModule.MeshController(
-        selectedGroup,
-        identity,
-        (update) => Yjs.applyUpdate(nextDoc, chat.decodeYUpdate(update), "remote"),
-        setMeshStatus
-      );
+      // MeshController now uses y-webrtc: peers in the same group auto-discover
+      // each other via wss://turn.0docker.com/ws and sync the Yjs doc directly.
+      const mesh = new meshModule.MeshController(selectedGroup, nextDoc, setMeshStatus);
 
       if (cancelled) {
         mesh.destroy();
@@ -167,11 +156,9 @@ export function App() {
         );
       };
 
-      const handleUpdate = (update: Uint8Array, origin: unknown) => {
+      // y-webrtc broadcasts every doc change automatically; just refresh UI.
+      const handleUpdate = () => {
         refresh();
-        if (origin !== "remote" && origin !== "storage") {
-          void mesh.broadcastYUpdate(chat.encodeYUpdate(update));
-        }
       };
 
       nextDoc.on("update", handleUpdate);
@@ -390,31 +377,6 @@ export function App() {
         tone: "good",
         text: "Welcome capsule created and relayed to joiner."
       });
-    } catch (error) {
-      setNotice({ tone: "bad", text: errorMessage(error) });
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function handleCreateOffer() {
-    setBusy(true);
-    try {
-      setSignalOutput((await meshRef.current?.createOffer()) ?? "");
-    } catch (error) {
-      setNotice({ tone: "bad", text: errorMessage(error) });
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function handleImportSignal() {
-    setBusy(true);
-    try {
-      const answer = await meshRef.current?.acceptSignal(signalInput);
-      if (answer) setSignalOutput(answer);
-      setSignalInput("");
-      setNotice({ tone: "good", text: "Signal capsule accepted." });
     } catch (error) {
       setNotice({ tone: "bad", text: errorMessage(error) });
     } finally {
@@ -720,32 +682,6 @@ export function App() {
               ) : null}
             </div>
             {capsuleOutput ? <CopyBox value={capsuleOutput} /> : null}
-          </Panel>
-
-          <Panel title="WebRTC Mesh" icon={<RadioTower size={17} />}>
-            <button
-              className="button w-full"
-              disabled={busy || !selectedGroup}
-              onClick={() => void handleCreateOffer()}
-              type="button"
-            >
-              <RadioTower size={16} /> Create peer offer
-            </button>
-            <textarea
-              className="textarea mt-2"
-              onChange={(event) => setSignalInput(event.target.value)}
-              placeholder="Paste WebRTC offer or answer"
-              value={signalInput}
-            />
-            <button
-              className="button mt-2 w-full"
-              disabled={busy || !signalInput.trim()}
-              onClick={() => void handleImportSignal()}
-              type="button"
-            >
-              <KeyRound size={16} /> Accept signal
-            </button>
-            {signalOutput ? <CopyBox value={signalOutput} /> : null}
           </Panel>
 
           <Panel title="Local AI" icon={<Bot size={17} />}>
