@@ -31,7 +31,7 @@
     "audit": "npm audit --audit-level=high"
   },
   "dependencies": {
-    "@huggingface/transformers": "^4.2.0",
+    "@huggingface/transformers": "^4.3.0",
     "@noble/curves": "^2.0.1",
     "@noble/hashes": "^2.2.0",
     "@tanstack/react-query": "^5.90.16",
